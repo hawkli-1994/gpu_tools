@@ -13,7 +13,7 @@ import (
 func init() {
 	gpu.Register(&nvidiaSMICommand{})
 }
- 
+
 func New() *nvidiaSMICommand {
 	return &nvidiaSMICommand{}
 }
@@ -135,17 +135,40 @@ func (n *nvidiaSMICommand) Vendor() string {
 }
 
 func (n *nvidiaSMICommand) DriverInfo() (gpu.GPUDriverInfo, error) {
-
+	cmd := exec.Command("nvidia-smi", "--version")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return gpu.GPUDriverInfo{}, fmt.Errorf("failed to execute nvidia-smi command: %v", err)
+	}
+	return ParseVersion(string(output))
 }
 
+func ParseVersion(versionInfo string) (gpu.GPUDriverInfo, error) {
+	info := gpu.GPUDriverInfo{}
+	lines := strings.Split(versionInfo, "\n")
 
-func ParseVersion(string) (gpu.GPUDriverInfo, error) {
+	for _, line := range lines {
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) < 2 {
+			continue
+		}
 
-	Info := gpu.GPUDriverInfo{
-		
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
 
+		switch key {
+		case "NVIDIA-SMI version":
+			info.ClientVersion = value
+		case "DRIVER version":
+			info.Version = value
+		case "CUDA Version":
+			info.LibVersion = value
+		}
 	}
-	// use 
 
-	return 
+	if info.ClientVersion == "" || info.Version == "" || info.LibVersion == "" {
+		return info, fmt.Errorf("failed to parse version info: missing required fields")
+	}
+
+	return info, nil
 }
