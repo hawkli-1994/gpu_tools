@@ -13,6 +13,10 @@ import (
 func init() {
 	gpu.Register(&nvidiaSMICommand{})
 }
+ 
+func New() *nvidiaSMICommand {
+	return &nvidiaSMICommand{}
+}
 
 type nvidiaSMICommand struct {
 }
@@ -128,4 +132,20 @@ func (n *nvidiaSMICommand) parse(output []byte) (*gpu.GPUInfoList, error) {
 
 func (n *nvidiaSMICommand) Vendor() string {
 	return "NVIDIA"
+}
+
+func (n *nvidiaSMICommand) DriverInfo() (gpu.GPUDriverInfo, error) {
+
+}
+
+
+func ParseVersion(string) (gpu.GPUDriverInfo, error) {
+
+	Info := gpu.GPUDriverInfo{
+		
+
+	}
+	// use 
+
+	return 
 }
