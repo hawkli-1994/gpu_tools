@@ -145,6 +145,12 @@ func (n *nvidiaSMICommand) DriverInfo() (gpu.GPUDriverInfo, error) {
 		return gpu.GPUDriverInfo{}, fmt.Errorf("failed to parse version info: %v", err)
 	}
 	info.Vendor = n.Vendor()
+	installPathCmd := exec.Command("which", "nvidia-smi")
+	installPathOutput, err := installPathCmd.CombinedOutput()
+	if err != nil {
+		return gpu.GPUDriverInfo{}, fmt.Errorf("failed to execute 'which nvidia-smi' command: %v", err)
+	}
+	info.InstallPath = strings.TrimSpace(string(installPathOutput))
 	return info, nil
 }
 
