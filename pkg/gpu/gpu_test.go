@@ -8,6 +8,6 @@ import (
 var _ DriverGetter = nvidia.New()
 
 type DriverGetter interface {
+	gpu.GPUInfoLoader
 	DriverInfo() (gpu.GPUDriverInfo, error)
 }
-

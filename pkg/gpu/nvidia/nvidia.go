@@ -140,7 +140,12 @@ func (n *nvidiaSMICommand) DriverInfo() (gpu.GPUDriverInfo, error) {
 	if err != nil {
 		return gpu.GPUDriverInfo{}, fmt.Errorf("failed to execute nvidia-smi command: %v", err)
 	}
-	return ParseVersion(string(output))
+	info, err := ParseVersion(string(output))
+	if err != nil {
+		return gpu.GPUDriverInfo{}, fmt.Errorf("failed to parse version info: %v", err)
+	}
+	info.Vendor = n.Vendor()
+	return info, nil
 }
 
 func ParseVersion(versionInfo string) (gpu.GPUDriverInfo, error) {
