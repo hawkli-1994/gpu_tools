@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cvm/vcad/pkg/gpu"
+	"github.com/hawkli-1994/gpu_tools/pkg/gpu"
 )
 
 func init() {
