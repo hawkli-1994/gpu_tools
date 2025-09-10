@@ -1,0 +1,33 @@
+mx-smi  version: 2.2.6
+
+=================== MetaX System Management Interface Log ===================
+Timestamp                                         : Wed Sep 10 10:15:35 2025
+
+Attached GPUs                                     : 1
+GPU#0  MXN260  0000:0f:00.0
+    Chip Temperature
+        hotspot                                   :  44.00 °C
+    Board Temperature
+        DrMOS_soc                                 :  37.00 °C
+        DrMOS_core                                :  35.00 °C
+        tdiode                                    :  37.50 °C
+        air-inlet                                 :  33.75 °C
+        air-outlet                                :  32.00 °C
+
+    Memory
+        vis_vram total                            : 67108864 KB
+        vis_vram used                             : 61215720 KB
+        vis_vram usage                            : 91.20 %
+        vram total                                : 67108864 KB
+        vram used                                 : 61215720 KB
+        vram usage                                : 91.20 %
+        xtt total                                 : 49128726 KB
+        xtt used                                  : 41836 KB
+        xtt usage                                 : 0.00 %
+
+    Utilization
+        GPU                                       : 0 %
+        VPUE                                      : 0 %
+        VPUD                                      : 0 %
+
+End of Log
