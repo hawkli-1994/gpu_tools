@@ -1,0 +1,1 @@
+cmd: dlsmi query --xml-format
