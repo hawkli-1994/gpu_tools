@@ -53,7 +53,7 @@ func (n *nvidiaSMICommand) parse(output []byte) (*gpu.GPUInfoList, error) {
 	}
 
 	for _, row := range records {
-		if len(row) < 6 {
+		if len(row) < 7 {
 			continue
 		}
 
@@ -103,7 +103,10 @@ func (n *nvidiaSMICommand) parse(output []byte) (*gpu.GPUInfoList, error) {
 			temperatureFloat = temp
 		}
 
-		pciBusID := strings.TrimPrefix(strings.TrimSpace(row[6]), "0000")
+		pciBusID := ""
+		if len(row) >= 7 {
+			pciBusID = strings.TrimSpace(row[6])
+		}
 
 		device := gpu.GPUInfo{
 			Num:                         indexInt,
@@ -117,11 +120,11 @@ func (n *nvidiaSMICommand) parse(output []byte) (*gpu.GPUInfoList, error) {
 			TemperatureEdge:             fmt.Sprintf("%.1f", temperatureFloat),
 			TemperatureJunction:         fmt.Sprintf("%.1f", temperatureFloat),
 			TemperatureMemory:           fmt.Sprintf("%.1f", temperatureFloat),
-			AverageGraphicsPackagePower: "0",      // Not provided by basic nvidia-smi query
-			SerialNumber:                "",       // Not provided by basic nvidia-smi query
-			DeviceRev:                   "",       // Not provided by basic nvidia-smi query
-			CardSKU:                     "",       // Not provided by basic nvidia-smi query
-			PCIBus:                      pciBusID, // Not provided by basic nvidia-smi query
+			AverageGraphicsPackagePower: "0", // Not provided by basic nvidia-smi query
+			SerialNumber:                "",  // Not provided by basic nvidia-smi query
+			DeviceRev:                   "",  // Not provided by basic nvidia-smi query
+			CardSKU:                     "",  // Not provided by basic nvidia-smi query
+			PCIBus:                      pciBusID,
 		}
 
 		result.GPUInfos = append(result.GPUInfos, device)

@@ -9,8 +9,8 @@ import (
 
 func TestParse(t *testing.T) {
 	// Test data based on the example from Python code
-	csvData := `0, NVIDIA GeForce RTX 4080 SUPER, 16376 MiB, 1309 MiB, 0 %, 41
-1, NVIDIA GeForce RTX 4080 SUPER, 16376 MiB, 13625 MiB, 5 %, 39`
+	csvData := `0, NVIDIA GeForce RTX 4080 SUPER, 16376 MiB, 1309 MiB, 0 %, 41, 00000000:50:00.0
+1, NVIDIA GeForce RTX 4080 SUPER, 16376 MiB, 13625 MiB, 5 %, 39, 00000000:51:00.0`
 
 	nvidia := &nvidiaSMICommand{}
 
@@ -25,6 +25,7 @@ func TestParse(t *testing.T) {
 	assert.Equal(t, "NVIDIA GeForce RTX 4080 SUPER", gpu0.CardModel)
 	assert.Equal(t, "NVIDIA", gpu0.CardVendor)
 	assert.Equal(t, "NVIDIA", gpu0.CardSeries)
+	assert.Equal(t, "00000000:50:00.0", gpu0.PCIBus)
 
 	// Memory: 16376 MiB = 16376 * 1024 * 1024 = 17171480576 bytes
 	assert.Equal(t, "17171480576", gpu0.VRAMTotalMemory)
@@ -41,6 +42,7 @@ func TestParse(t *testing.T) {
 	assert.Equal(t, 1, gpu1.Num)
 	assert.Equal(t, "1", gpu1.DeviceID)
 	assert.Equal(t, "NVIDIA GeForce RTX 4080 SUPER", gpu1.CardModel)
+	assert.Equal(t, "00000000:51:00.0", gpu1.PCIBus)
 
 	// Memory used: 13625 MiB = 13625 * 1024 * 1024 = 14286848000 bytes
 	assert.Equal(t, "14286848000", gpu1.VRAMTotalUsedMemory)
