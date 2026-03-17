@@ -60,6 +60,20 @@ func autoFindSmiPath() string {
 	return ""
 }
 
+// setupIxsmmiEnv 设置 ixsmi 所需的环境变量
+func setupIxsmmiEnv(smiPath string) {
+	smiDir := strings.TrimSuffix(smiPath, "/bin/ixsmi")
+	ixsmiLibPath := fmt.Sprintf("%s/lib:%s/lib64", smiDir, smiDir)
+
+	oldPath := os.Getenv("PATH")
+	os.Setenv("PATH", smiDir+"/bin:"+oldPath)
+
+	oldLibPath := os.Getenv("LD_LIBRARY_PATH")
+	os.Setenv("LD_LIBRARY_PATH", ixsmiLibPath+":"+oldLibPath)
+
+	logger.Info("ixGPU env", "PATH", os.Getenv("PATH"), "LD_LIBRARY_PATH", os.Getenv("LD_LIBRARY_PATH"))
+}
+
 type ixGPU struct {
 }
 
@@ -69,14 +83,7 @@ func (a *ixGPU) Load() (*gpu.GPUInfoList, error) {
 		logger.Error("ixGPU Load autoFindSmiPath", "smiPath", smiPath, "error", fmt.Errorf("ixsmi not found"))
 		return nil, fmt.Errorf("ixsmi not found")
 	}
-	ixsmiLibPath := fmt.Sprintf(
-		"$LD_LIBRARY_PATH:%s/lib:%s/lib64",
-		strings.TrimSuffix(smiPath, "/bin/ixsmi"),
-		strings.TrimSuffix(smiPath, "/bin/ixsmi"),
-	)
-	os.Setenv("PATH", smiPath)
-	os.Setenv("LD_LIBRARY_PATH", ixsmiLibPath)
-	logger.Info("ixGPU Load", "PATH", os.Getenv("PATH"), "LD_LIBRARY_PATH", os.Getenv("LD_LIBRARY_PATH"))
+	setupIxsmmiEnv(smiPath)
 
 	cmd := exec.Command(smiPath, "-q", "-x")
 	data, err := cmd.Output()
@@ -109,14 +116,7 @@ func (a *ixGPU) Available() bool {
 		return false
 	}
 	logger.Info("ixGPU Available", "smiPath", smiPath)
-	ixsmiLibPath := fmt.Sprintf(
-		"$LD_LIBRARY_PATH:%s/lib:%s/lib64",
-		strings.TrimSuffix(smiPath, "/bin/ixsmi"),
-		strings.TrimSuffix(smiPath, "/bin/ixsmi"),
-	)
-	os.Setenv("PATH", smiPath)
-	os.Setenv("LD_LIBRARY_PATH", ixsmiLibPath)
-	logger.Info("ixGPU Available", "PATH", os.Getenv("PATH"), "LD_LIBRARY_PATH", os.Getenv("LD_LIBRARY_PATH"))
+	setupIxsmmiEnv(smiPath)
 
 	_, err := exec.LookPath(smiPath)
 	if err != nil {
