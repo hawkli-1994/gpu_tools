@@ -31,6 +31,7 @@ var smiPaths = []string{}
 func scanCorexSmiPaths(rootDir string) []string {
 	var paths []string
 
+	logger.Info("scanCorexSmiPaths: scanning directory", "dir", rootDir)
 	dirs, err := os.ReadDir(rootDir)
 	if err != nil {
 		logger.Error("scanCorexSmiPaths: failed to read directory", "dir", rootDir, "error", err)
@@ -38,8 +39,10 @@ func scanCorexSmiPaths(rootDir string) []string {
 	}
 
 	for _, d := range dirs {
+		logger.Info("scanCorexSmiPaths: checking dir", "name", d.Name(), "isDir", d.IsDir())
 		if d.IsDir() && strings.HasPrefix(d.Name(), "corex") {
 			smiPath := filepath.Join(rootDir, d.Name(), "bin", "ixsmi")
+			logger.Info("scanCorexSmiPaths: checking smiPath", "smiPath", smiPath)
 			if _, err := os.Stat(smiPath); err == nil {
 				paths = append(paths, smiPath)
 			}
@@ -107,7 +110,7 @@ func (a *ixGPU) Vendor() string {
 }
 
 func (a *ixGPU) Available() bool {
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+	if runtime.GOOS != "linux" {
 		logger.Info("ixGPU Available check os", "os", runtime.GOOS, "arch", runtime.GOARCH, "return", false)
 		return false
 	}
