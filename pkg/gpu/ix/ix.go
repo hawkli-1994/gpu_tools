@@ -69,13 +69,16 @@ func (a *ixGPU) Load() (*gpu.GPUInfoList, error) {
 		logger.Error("ixGPU Load autoFindSmiPath", "smiPath", smiPath, "error", fmt.Errorf("ixsmi not found"))
 		return nil, fmt.Errorf("ixsmi not found")
 	}
+	smiDir := strings.TrimSuffix(smiPath, "/bin/ixsmi")
 	ixsmiLibPath := fmt.Sprintf(
-		"$LD_LIBRARY_PATH:%s/lib:%s/lib64",
-		strings.TrimSuffix(smiPath, "/bin/ixsmi"),
-		strings.TrimSuffix(smiPath, "/bin/ixsmi"),
+		"%s/lib:%s/lib64",
+		smiDir,
+		smiDir,
 	)
-	os.Setenv("PATH", smiPath)
-	os.Setenv("LD_LIBRARY_PATH", ixsmiLibPath)
+	oldPath := os.Getenv("PATH")
+	os.Setenv("PATH", smiDir+"/bin:"+oldPath)
+	oldLibPath := os.Getenv("LD_LIBRARY_PATH")
+	os.Setenv("LD_LIBRARY_PATH", ixsmiLibPath+":"+oldLibPath)
 	logger.Info("ixGPU Load", "PATH", os.Getenv("PATH"), "LD_LIBRARY_PATH", os.Getenv("LD_LIBRARY_PATH"))
 
 	cmd := exec.Command(smiPath, "-q", "-x")
@@ -109,13 +112,16 @@ func (a *ixGPU) Available() bool {
 		return false
 	}
 	logger.Info("ixGPU Available", "smiPath", smiPath)
+	smiDir := strings.TrimSuffix(smiPath, "/bin/ixsmi")
 	ixsmiLibPath := fmt.Sprintf(
-		"$LD_LIBRARY_PATH:%s/lib:%s/lib64",
-		strings.TrimSuffix(smiPath, "/bin/ixsmi"),
-		strings.TrimSuffix(smiPath, "/bin/ixsmi"),
+		"%s/lib:%s/lib64",
+		smiDir,
+		smiDir,
 	)
-	os.Setenv("PATH", smiPath)
-	os.Setenv("LD_LIBRARY_PATH", ixsmiLibPath)
+	oldPath := os.Getenv("PATH")
+	os.Setenv("PATH", smiDir+"/bin:"+oldPath)
+	oldLibPath := os.Getenv("LD_LIBRARY_PATH")
+	os.Setenv("LD_LIBRARY_PATH", ixsmiLibPath+":"+oldLibPath)
 	logger.Info("ixGPU Available", "PATH", os.Getenv("PATH"), "LD_LIBRARY_PATH", os.Getenv("LD_LIBRARY_PATH"))
 
 	_, err := exec.LookPath(smiPath)
