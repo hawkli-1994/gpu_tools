@@ -51,31 +51,6 @@ func (e *enflameSMICommand) Available() bool {
 }
 
 func (e *enflameSMICommand) parse(output []byte) (*gpu.GPUInfoList, error) {
-	// root@node1:~# efsmi -q -d TEMP,MEMORY,USAGE
-	// ----------------------------------------------------------------------------
-	// ------------------- Enflame System Management Interface --------------------
-	// ---------- Enflame Tech, All Rights Reserved. 2024 Copyright (C) -----------
-	// ----------------------------------------------------------------------------
-
-	// DEV ID 0
-	// 	Device Mem Info
-	// 		Mem Size                : 42976 MiB
-	// 		Mem Usage               : 1129 MiB
-	// 		Mem Ecc                 : enable
-	// 	Temperature Info
-	// 		GCU Temp                : 34 C
-	// 	Device Usage Info
-	// 		GCU Usage               : 0.0 %
-	// DEV ID 1
-	// 	Device Mem Info
-	// 		Mem Size                : 42976 MiB
-	// 		Mem Usage               : 1129 MiB
-	// 		Mem Ecc                 : enable
-	// 	Temperature Info
-	// 		GCU Temp                : 34 C
-	// 	Device Usage Info
-	// 		GCU Usage               : 0.0 %
-
 	scanner := bufio.NewScanner(bytes.NewReader(output))
 	scanner.Split(bufio.ScanLines)
 
@@ -84,6 +59,7 @@ func (e *enflameSMICommand) parse(output []byte) (*gpu.GPUInfoList, error) {
 	}
 
 	var currentGPU *gpu.GPUInfo
+	var currentSection string
 	valueRegex := regexp.MustCompile(`:\s+(.+)`)
 	num := 0
 	for scanner.Scan() {
@@ -103,65 +79,99 @@ func (e *enflameSMICommand) parse(output []byte) (*gpu.GPUInfoList, error) {
 				CardVendor:          "Enflame",
 				CardModel:           "Enflame GCU",
 				TemperatureMemory:   "0",
+				TemperatureEdge:     "0",
+				TemperatureJunction: "0",
 				VRAMTotalMemory:     "0",
 				VRAMTotalUsedMemory: "0",
 				GPUUse:              "0",
 				PCIBus:              "",
 			}
+			currentSection = ""
 			num++
-		} else if currentGPU != nil {
-			// 提取值
-			matches := valueRegex.FindStringSubmatch(line)
-			if len(matches) > 1 {
-				value := matches[1]
+			continue
+		}
 
-				switch {
-				case strings.Contains(line, "Mem Size") || strings.Contains(line, "Total Size"):
-					// 从"42976 MiB"转换为字节数
-					parts := strings.Split(value, " ")
-					if len(parts) >= 2 && parts[1] == "MiB" {
-						if size, err := strconv.ParseFloat(parts[0], 64); err == nil {
-							// 转换MiB到B (1 MiB = 1024*1024 B)
-							size = size * 1024 * 1024
-							currentGPU.VRAMTotalMemory = fmt.Sprintf("%.0f", size)
-						}
-					}
+		if currentGPU == nil {
+			continue
+		}
 
-				case strings.Contains(line, "Mem Usage") || strings.Contains(line, "Used Size"):
-					// 从"1129 MiB"转换为字节数
-					parts := strings.Split(value, " ")
-					if len(parts) >= 2 && parts[1] == "MiB" {
-						if size, err := strconv.ParseFloat(parts[0], 64); err == nil {
-							// 转换MiB到B (1 MiB = 1024*1024 B)
-							size = size * 1024 * 1024
-							currentGPU.VRAMTotalUsedMemory = fmt.Sprintf("%.0f", size)
-						}
-					}
+		// 检测 section 切换
+		switch {
+		case strings.HasPrefix(line, "PCIe Info"):
+			currentSection = "pcie"
+			continue
+		case strings.HasPrefix(line, "Device Mem Info"):
+			currentSection = "device_mem"
+			continue
+		case strings.HasPrefix(line, "BAR1 Mem Info"):
+			currentSection = "bar1"
+			continue
+		case strings.HasPrefix(line, "BAR2 Mem Info"):
+			currentSection = "bar2"
+			continue
+		case strings.HasPrefix(line, "Temperature Info"):
+			currentSection = "temperature"
+			continue
+		case strings.HasPrefix(line, "Device Usage Info"):
+			currentSection = "usage"
+			continue
+		case strings.HasPrefix(line, "Link Info"):
+			currentSection = "link"
+			continue
+		}
 
-				case strings.Contains(line, "GCU Temp"):
-					// 从"34 C"提取温度
-					parts := strings.Split(value, " ")
-					if len(parts) >= 1 {
-						currentGPU.TemperatureMemory = parts[0]
-						currentGPU.TemperatureEdge = parts[0]
-						currentGPU.TemperatureJunction = parts[0]
-					}
+		matches := valueRegex.FindStringSubmatch(line)
+		if len(matches) <= 1 {
+			continue
+		}
+		value := matches[1]
 
-				case strings.Contains(line, "GCU Usage"):
-					// 从"0.0 %"提取使用率
-					parts := strings.Split(value, " ")
-					if len(parts) >= 1 {
-						currentGPU.GPUUse = parts[0]
+		switch currentSection {
+		case "device_mem":
+			switch {
+			case strings.Contains(line, "Mem Size") || strings.Contains(line, "Total Size"):
+				parts := strings.Split(value, " ")
+				if len(parts) >= 2 && parts[1] == "MiB" {
+					if size, err := strconv.ParseFloat(parts[0], 64); err == nil {
+						size = size * 1024 * 1024
+						currentGPU.VRAMTotalMemory = fmt.Sprintf("%.0f", size)
 					}
-				case strings.Contains(line, "Domain"):
-					currentGPU.PCIBus = strings.TrimSpace(value)
-				case strings.Contains(line, "Bus"):
-					currentGPU.PCIBus = fmt.Sprintf("%s:%s", currentGPU.PCIBus, strings.TrimSpace(value))
-				case strings.Contains(line, "Dev  "):
-					currentGPU.PCIBus = fmt.Sprintf("%s:%s", currentGPU.PCIBus, strings.TrimSpace(value))
-				case strings.Contains(line, "Func"):
-					currentGPU.PCIBus = fmt.Sprintf("%s.%s", currentGPU.PCIBus, strings.TrimSpace(value))
 				}
+			case strings.Contains(line, "Mem Usage") || strings.Contains(line, "Used Size"):
+				parts := strings.Split(value, " ")
+				if len(parts) >= 2 && parts[1] == "MiB" {
+					if size, err := strconv.ParseFloat(parts[0], 64); err == nil {
+						size = size * 1024 * 1024
+						currentGPU.VRAMTotalUsedMemory = fmt.Sprintf("%.0f", size)
+					}
+				}
+			}
+		case "temperature":
+			if strings.Contains(line, "GCU Temp") {
+				parts := strings.Split(value, " ")
+				if len(parts) >= 1 {
+					currentGPU.TemperatureMemory = parts[0]
+					currentGPU.TemperatureEdge = parts[0]
+					currentGPU.TemperatureJunction = parts[0]
+				}
+			}
+		case "usage":
+			if strings.Contains(line, "GCU Usage") {
+				parts := strings.Split(value, " ")
+				if len(parts) >= 1 {
+					currentGPU.GPUUse = parts[0]
+				}
+			}
+		case "pcie":
+			switch {
+			case strings.Contains(line, "Domain"):
+				currentGPU.PCIBus = strings.TrimSpace(value)
+			case strings.Contains(line, "Bus"):
+				currentGPU.PCIBus = fmt.Sprintf("%s:%s", currentGPU.PCIBus, strings.TrimSpace(value))
+			case strings.Contains(line, "Dev  "):
+				currentGPU.PCIBus = fmt.Sprintf("%s:%s", currentGPU.PCIBus, strings.TrimSpace(value))
+			case strings.Contains(line, "Func"):
+				currentGPU.PCIBus = fmt.Sprintf("%s.%s", currentGPU.PCIBus, strings.TrimSpace(value))
 			}
 		}
 	}

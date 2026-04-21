@@ -2,64 +2,141 @@ package enflame
 
 import (
 	"fmt"
-	"strconv"
 	"testing"
 
+	"github.com/hawkli-1994/gpu_tools/pkg/gpu"
 	_ "embed"
 )
 
 //go:embed testdata/efs.txt
 var efs []byte
 
+//go:embed testdata/efs-15.txt
+var efs15 []byte
+
+//go:embed testdata/efs17.txt
+var efs17 []byte
+
 func TestEnflameParse(t *testing.T) {
-	enflame := &enflameSMICommand{}
-	gpuInfoList, err := enflame.parse(efs)
-	if err != nil {
-		t.Fatalf("failed to parse efsmi output: %v", err)
+	tests := []struct {
+		name     string
+		input    []byte
+		expected []gpu.GPUInfo
+	}{
+		{
+			name:  "efs_old_format",
+			input: efs,
+			expected: []gpu.GPUInfo{
+				{
+					Num: 0, DeviceID: "0", CardVendor: "Enflame", CardModel: "Enflame GCU",
+					TemperatureMemory: "39", TemperatureEdge: "39", TemperatureJunction: "39",
+					VRAMTotalMemory:     fmt.Sprintf("%d", 42976*1024*1024),
+					VRAMTotalUsedMemory: fmt.Sprintf("%d", 1129*1024*1024),
+					GPUUse:              "0.0",
+					PCIBus:              "0000:0c:00.0",
+				},
+				{
+					Num: 1, DeviceID: "1", CardVendor: "Enflame", CardModel: "Enflame GCU",
+					TemperatureMemory: "39", TemperatureEdge: "39", TemperatureJunction: "39",
+					VRAMTotalMemory:     fmt.Sprintf("%d", 42976*1024*1024),
+					VRAMTotalUsedMemory: fmt.Sprintf("%d", 1129*1024*1024),
+					GPUUse:              "0.0",
+					PCIBus:              "0000:0f:00.0",
+				},
+			},
+		},
+		{
+			name:  "efs15_total_size_no_bar",
+			input: efs15,
+			expected: []gpu.GPUInfo{
+				{
+					Num: 0, DeviceID: "0", CardVendor: "Enflame", CardModel: "Enflame GCU",
+					TemperatureMemory: "58", TemperatureEdge: "58", TemperatureJunction: "58",
+					VRAMTotalMemory:     fmt.Sprintf("%d", 42976*1024*1024),
+					VRAMTotalUsedMemory: fmt.Sprintf("%d", 24028*1024*1024),
+					GPUUse:              "0.0",
+					PCIBus:              "0000:0c:00.0",
+				},
+				{
+					Num: 1, DeviceID: "1", CardVendor: "Enflame", CardModel: "Enflame GCU",
+					TemperatureMemory: "59", TemperatureEdge: "59", TemperatureJunction: "59",
+					VRAMTotalMemory:     fmt.Sprintf("%d", 42976*1024*1024),
+					VRAMTotalUsedMemory: fmt.Sprintf("%d", 24028*1024*1024),
+					GPUUse:              "0.0",
+					PCIBus:              "0000:0f:00.0",
+				},
+			},
+		},
+		{
+			name:  "efs17_total_size_with_bar",
+			input: efs17,
+			expected: []gpu.GPUInfo{
+				{
+					Num: 0, DeviceID: "0", CardVendor: "Enflame", CardModel: "Enflame GCU",
+					TemperatureMemory: "76", TemperatureEdge: "76", TemperatureJunction: "76",
+					VRAMTotalMemory:     fmt.Sprintf("%d", 42976*1024*1024),
+					VRAMTotalUsedMemory: fmt.Sprintf("%d", 8684*1024*1024),
+					GPUUse:              "0.0",
+					PCIBus:              "0000:0c:00.0",
+				},
+				{
+					Num: 1, DeviceID: "1", CardVendor: "Enflame", CardModel: "Enflame GCU",
+					TemperatureMemory: "0", TemperatureEdge: "0", TemperatureJunction: "0",
+					VRAMTotalMemory:     "0",
+					VRAMTotalUsedMemory: "0",
+					GPUUse:              "0",
+					PCIBus:              "0000:0f:00.0",
+				},
+			},
+		},
 	}
 
-	// fmt.Printf("gpuInfoList: %+v\n", gpuInfoList)
-	for i, gpuInfo := range gpuInfoList.GPUInfos {
-		fmt.Printf("gpuInfo: %+v\n", gpuInfo)
-		if i == 0 {
-			if gpuInfo.DeviceID != "0" {
-				t.Fatalf("expected device ID 0, got %s", gpuInfo.DeviceID)
-			}
-			if gpuInfo.CardVendor != "Enflame" {
-				t.Fatalf("expected card vendor Enflame, got %s", gpuInfo.CardVendor)
-			}
-			if gpuInfo.CardModel != "Enflame GCU" {
-				t.Fatalf("expected card model Enflame GCU, got %s", gpuInfo.CardModel)
-			}
-			memBytes, err := strconv.ParseUint(gpuInfo.VRAMTotalMemory, 10, 64)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := &enflameSMICommand{}
+			gpuInfoList, err := e.parse(tt.input)
 			if err != nil {
-				t.Fatalf("failed to parse VRAM total memory: %v", err)
+				t.Fatalf("failed to parse: %v", err)
 			}
-			if memBytes != 42976*1024*1024 {
-				t.Fatalf("expected VRAM total memory 42976 MiB, got %s", gpuInfo.VRAMTotalMemory)
+			if len(gpuInfoList.GPUInfos) != len(tt.expected) {
+				t.Fatalf("expected %d GPUs, got %d", len(tt.expected), len(gpuInfoList.GPUInfos))
 			}
-			memUsedBytes, err := strconv.ParseUint(gpuInfo.VRAMTotalUsedMemory, 10, 64)
-			if err != nil {
-				t.Fatalf("failed to parse VRAM total used memory: %v", err)
+			for i, exp := range tt.expected {
+				got := gpuInfoList.GPUInfos[i]
+				if got.Num != exp.Num {
+					t.Errorf("GPU %d Num: expected %d, got %d", i, exp.Num, got.Num)
+				}
+				if got.DeviceID != exp.DeviceID {
+					t.Errorf("GPU %d DeviceID: expected %s, got %s", i, exp.DeviceID, got.DeviceID)
+				}
+				if got.CardVendor != exp.CardVendor {
+					t.Errorf("GPU %d CardVendor: expected %s, got %s", i, exp.CardVendor, got.CardVendor)
+				}
+				if got.CardModel != exp.CardModel {
+					t.Errorf("GPU %d CardModel: expected %s, got %s", i, exp.CardModel, got.CardModel)
+				}
+				if got.TemperatureMemory != exp.TemperatureMemory {
+					t.Errorf("GPU %d TemperatureMemory: expected %s, got %s", i, exp.TemperatureMemory, got.TemperatureMemory)
+				}
+				if got.TemperatureEdge != exp.TemperatureEdge {
+					t.Errorf("GPU %d TemperatureEdge: expected %s, got %s", i, exp.TemperatureEdge, got.TemperatureEdge)
+				}
+				if got.TemperatureJunction != exp.TemperatureJunction {
+					t.Errorf("GPU %d TemperatureJunction: expected %s, got %s", i, exp.TemperatureJunction, got.TemperatureJunction)
+				}
+				if got.VRAMTotalMemory != exp.VRAMTotalMemory {
+					t.Errorf("GPU %d VRAMTotalMemory: expected %s, got %s", i, exp.VRAMTotalMemory, got.VRAMTotalMemory)
+				}
+				if got.VRAMTotalUsedMemory != exp.VRAMTotalUsedMemory {
+					t.Errorf("GPU %d VRAMTotalUsedMemory: expected %s, got %s", i, exp.VRAMTotalUsedMemory, got.VRAMTotalUsedMemory)
+				}
+				if got.GPUUse != exp.GPUUse {
+					t.Errorf("GPU %d GPUUse: expected %s, got %s", i, exp.GPUUse, got.GPUUse)
+				}
+				if got.PCIBus != exp.PCIBus {
+					t.Errorf("GPU %d PCIBus: expected %s, got %s", i, exp.PCIBus, got.PCIBus)
+				}
 			}
-			if memUsedBytes != 1129*1024*1024 {
-				t.Fatalf("expected VRAM total used memory 1129 MiB, got %s", gpuInfo.VRAMTotalUsedMemory)
-			}
-			if gpuInfo.TemperatureMemory != "39" {
-				t.Fatalf("expected temperature memory 39 C, got %s", gpuInfo.TemperatureMemory)
-			}
-			if gpuInfo.Num != 0 {
-				t.Fatalf("expected num 0, got %d", gpuInfo.Num)
-			}
-			if gpuInfo.PCIBus != "0000:0c:00.0" {
-				t.Fatalf("expected PCI bus 0000:0c:00.0, got %s", gpuInfo.PCIBus)
-			}
-		}
-		if i == 1 {
-			if gpuInfo.PCIBus != "0000:0f:00.0" {
-				t.Fatalf("expected PCI bus 0000:0f:00.0, got %s", gpuInfo.PCIBus)
-			}
-		}
-		i++
+		})
 	}
 }
