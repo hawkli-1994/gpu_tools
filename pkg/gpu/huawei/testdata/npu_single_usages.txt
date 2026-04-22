@@ -1,0 +1,7 @@
+	NPU ID                         : 1234
+	Chip Count                     : 1
+
+	DDR Capacity(MB)               : 22000
+	DDR Usage Rate(%)              : 10
+	Aicore Usage Rate(%)           : 10
+	Chip ID                        : 0

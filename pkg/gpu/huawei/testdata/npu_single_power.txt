@@ -1,0 +1,5 @@
+	NPU ID                         : 1234
+	Chip Count                     : 1
+
+	Power Dissipation(W)           : 65.5
+	Chip Name                      : MCU

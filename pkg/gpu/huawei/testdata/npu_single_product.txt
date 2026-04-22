@@ -1,0 +1,5 @@
+	NPU ID                         : 1234
+	Chip Count                     : 1
+
+	Product Type                   : Atlas 300I Pro
+	Chip ID                        : 0

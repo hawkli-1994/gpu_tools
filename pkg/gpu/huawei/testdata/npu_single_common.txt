@@ -1,0 +1,6 @@
+	NPU ID                         : 1234
+	Chip Count                     : 1
+
+	Chip ID                        : 0
+	Temperature(C)                 : 55
+	Aicore Usage Rate(%)           : 10

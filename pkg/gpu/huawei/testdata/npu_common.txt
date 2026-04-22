@@ -1,0 +1,20 @@
+	NPU ID                         : 2944
+	Chip Count                     : 2
+
+	Chip ID                        : 0
+	Memory Usage Rate(%)           : 2
+	Aicore Usage Rate(%)           : 0
+	Aicore Freq(MHZ)               : 1080
+	Aicore curFreq(MHZ)            : 960
+	Temperature(C)                 : 45
+
+	Chip ID                        : 1
+	Memory Usage Rate(%)           : 3
+	Aicore Usage Rate(%)           : 0
+	Aicore Freq(MHZ)               : 1080
+	Aicore curFreq(MHZ)            : 960
+	Temperature(C)                 : 47
+
+	Chip Name                      : mcu
+	Temperature(C)                 : 48
+	NPU Real-time Power(W)         : 42.8

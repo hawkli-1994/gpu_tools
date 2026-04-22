@@ -1,0 +1,5 @@
+	NPU ID                         : 1234
+	Product Name                   : Atlas 300I Pro
+	Serial Number                  : SN987654321
+	PCIe Bus Info                  : 0000:01:00.0
+	Chip Count                     : 1

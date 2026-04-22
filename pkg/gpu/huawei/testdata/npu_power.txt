@@ -1,0 +1,5 @@
+	NPU ID                         : 2944
+	Chip Count                     : 2
+
+	Power Dissipation(W)           : 42.9
+	Chip Name                      : MCU

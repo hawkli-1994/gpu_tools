@@ -1,0 +1,8 @@
+	NPU ID                         : 2944
+	Chip Count                     : 2
+
+	Product Type                   : Atlas 300I Duo
+	Chip ID                        : 0
+
+	Product Type                   : Atlas 300I Duo
+	Chip ID                        : 1
