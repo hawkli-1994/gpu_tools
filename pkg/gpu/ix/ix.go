@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/hawkli-1994/gpu_tools/pkg/gpu"
 )
@@ -26,6 +27,7 @@ const (
 
 var logger = slog.New(slog.NewTextHandler(os.Stdout, nil))
 var smiPaths = []string{}
+var envOnce sync.Once
 
 // scanCorexSmiPaths 扫描指定目录下所有以 corex 开头的文件夹，并返回对应的 ixsmi 路径
 func scanCorexSmiPaths(rootDir string) []string {
@@ -63,18 +65,20 @@ func autoFindSmiPath() string {
 	return ""
 }
 
-// setupIxsmmiEnv 设置 ixsmi 所需的环境变量
+// setupIxsmmiEnv 设置 ixsmi 所需的环境变量（仅首次调用生效）
 func setupIxsmmiEnv(smiPath string) {
-	smiDir := strings.TrimSuffix(smiPath, "/bin/ixsmi")
-	ixsmiLibPath := fmt.Sprintf("%s/lib:%s/lib64", smiDir, smiDir)
+	envOnce.Do(func() {
+		smiDir := strings.TrimSuffix(smiPath, "/bin/ixsmi")
+		ixsmiLibPath := fmt.Sprintf("%s/lib:%s/lib64", smiDir, smiDir)
 
-	oldPath := os.Getenv("PATH")
-	os.Setenv("PATH", smiDir+"/bin:"+oldPath)
+		oldPath := os.Getenv("PATH")
+		os.Setenv("PATH", smiDir+"/bin:"+oldPath)
 
-	oldLibPath := os.Getenv("LD_LIBRARY_PATH")
-	os.Setenv("LD_LIBRARY_PATH", ixsmiLibPath+":"+oldLibPath)
+		oldLibPath := os.Getenv("LD_LIBRARY_PATH")
+		os.Setenv("LD_LIBRARY_PATH", ixsmiLibPath+":"+oldLibPath)
 
-	logger.Info("ixGPU env", "PATH", os.Getenv("PATH"), "LD_LIBRARY_PATH", os.Getenv("LD_LIBRARY_PATH"))
+		logger.Info("ixGPU env", "PATH", os.Getenv("PATH"), "LD_LIBRARY_PATH", os.Getenv("LD_LIBRARY_PATH"))
+	})
 }
 
 type ixGPU struct {
