@@ -1,0 +1,52 @@
+==========================XDXSMI LOG==========================
+    Version                         : 1.6.21
+    Timestamp                       : 2026-05-22 16:03:20
+    Attached GPUs                   : 2
+
+    GPU 0
+        Product Name                : R1900
+        Product Architecture        : PANGU_A0
+        Firmware Version            : v2.4.3
+        Firmware Release Time       : 2025-04-18 14:37:28
+        PCI
+            Bus                     : 0x19
+            Device                  : 0x00
+            Domain                  : 0x0000
+            Bus Id                  : 0000:19:00.0
+            Vendor Id               : 0x1eed
+            Device Id               : 0x15a3
+            Subsystem Vendor ID     : 0x1eed
+            Subsystem ID            : 0x0
+        FB Memory Usage
+            Total                   : 16384 MiB
+        Power
+            GPU Core Volt           : 0.96 V
+            Pwr Total               : 41.0 W
+        Temperature                 : 35 °C
+        Fan Speed                   : 2760 RPM
+        Clocks
+            Graphics                : 1200 MHz
+
+    GPU 1
+        Product Name                : R1900
+        Product Architecture        : PANGU_A0
+        Firmware Version            : v2.4.3
+        Firmware Release Time       : 2025-04-18 14:37:28
+        PCI
+            Bus                     : 0x1a
+            Device                  : 0x00
+            Domain                  : 0x0000
+            Bus Id                  : 0000:1a:00.0
+            Vendor Id               : 0x1eed
+            Device Id               : 0x15a3
+            Subsystem Vendor ID     : 0x1eed
+            Subsystem ID            : 0x0
+        FB Memory Usage
+            Total                   : 16384 MiB
+        Power
+            GPU Core Volt           : 0.95 V
+            Pwr Total               : 41.0 W
+        Temperature                 : 35 °C
+        Fan Speed                   : 2700 RPM
+        Clocks
+            Graphics                : 1200 MHz
