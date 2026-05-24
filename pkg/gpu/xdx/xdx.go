@@ -20,7 +20,7 @@ type xdxSMICommand struct {
 }
 
 func (x *xdxSMICommand) Load() (*gpu.GPUInfoList, error) {
-	cmd := exec.Command("xdxsmi", "out")
+	cmd := exec.Command("/bin/sh", "-c", "xdxsmi out")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute xdxsmi command: %v", err)
