@@ -17,4 +17,5 @@ import (
 	_ "github.com/hawkli-1994/gpu_tools/pkg/gpu/ix"
 	_ "github.com/hawkli-1994/gpu_tools/pkg/gpu/mx"
 	_ "github.com/hawkli-1994/gpu_tools/pkg/gpu/nvidia"
+	_ "github.com/hawkli-1994/gpu_tools/pkg/gpu/xdx"
 )
