@@ -13,6 +13,7 @@ import (
 	_ "github.com/hawkli-1994/gpu_tools/pkg/gpu/cpu"
 	_ "github.com/hawkli-1994/gpu_tools/pkg/gpu/dl"
 	_ "github.com/hawkli-1994/gpu_tools/pkg/gpu/enflame"
+	_ "github.com/hawkli-1994/gpu_tools/pkg/gpu/houmoai"
 	_ "github.com/hawkli-1994/gpu_tools/pkg/gpu/huawei"
 	_ "github.com/hawkli-1994/gpu_tools/pkg/gpu/ix"
 	_ "github.com/hawkli-1994/gpu_tools/pkg/gpu/mx"

@@ -1,0 +1,85 @@
+--------------------------------------------------------------------------------
+  sdk build infos 
+--------------------------------------------------------------------------------
+  Build_Time     : 2026-05-19 00:36:52                                          
+  HMSW_Version   : V1.3.0                                                       
+  HM_SMI_Version : V1.0.0                                                       
+--------------------------------------------------------------------------------
+  Mon Jul 06 18:14:01 CST 2026
+--------------------------------------------------------------------------------
+  device1 detail infos 
+--------------------------------------------------------------------------------
+  Driver_Version         : V1.3.0                                               
+  Vendor                 : Houmo                                                
+  BDF                    : 0000:18:00.0                                         
+  Dev                    : 1                                                    
+  Cur_BandWidth          : 16.0 GT/s x 4lane                                    
+  Power_Management       :                                                      
+    DVFS_Mode            : performance                                          
+    Cur_Ipu_Freq         : 1400.0 Mhz                                           
+    Lock_Ipu_Max_Clock   : 1400.0 Mhz                                           
+    Lock_Ipu_Min_Clock   : 700.0 Mhz                                            
+    IPU_Load             : 0.0 %                                                
+  IPU_Infos              :                                                      
+    Core_Num             : 2                                                    
+    Core_Freq            : 1400.0 Mhz                                           
+    Voltage              : 750.0 mV                                             
+    Core0_Util           : 0.0 %                                                
+    Core1_Util           : 0.0 %                                                
+    Average_Util         : 0.0 %                                                
+  Group_Id               : 1                                                    
+  Chip_Id                : 0                                                    
+  SN                     : 0103020100002025003800000003                         
+  PN                     : 100I2010                                             
+  Model                  : LQ50-18GB                                            
+  Firmware_Version       : V1.1.1                                               
+  DDR_Memory_Infos       :                                                      
+    DDR_Memory_Free      : 18304.0MB                                            
+    DDR_Memory_Total     : 18304.0MB                                            
+  Temperature            :                                                      
+    DDR0                 : 48.5 C                                               
+    DDR2                 : 47.1 C                                               
+    DDR4                 : 47.4 C                                               
+    DDR5                 : 43.2 C                                               
+    Core0                : 46.8 C                                               
+    Core1                : 45.9 C                                               
+  Board_Power            : 6.73 W                                               
+--------------------------------------------------------------------------------
+  device0 detail infos 
+--------------------------------------------------------------------------------
+  Driver_Version         : V1.3.0                                               
+  Vendor                 : Houmo                                                
+  BDF                    : 0000:15:00.0                                         
+  Dev                    : 0                                                    
+  Cur_BandWidth          : 16.0 GT/s x 4lane                                    
+  Power_Management       :                                                      
+    DVFS_Mode            : performance                                          
+    Cur_Ipu_Freq         : 1400.0 Mhz                                           
+    Lock_Ipu_Max_Clock   : 1400.0 Mhz                                           
+    Lock_Ipu_Min_Clock   : 700.0 Mhz                                            
+    IPU_Load             : 0.0 %                                                
+  IPU_Infos              :                                                      
+    Core_Num             : 2                                                    
+    Core_Freq            : 1400.0 Mhz                                           
+    Voltage              : 750.0 mV                                             
+    Core0_Util           : 0.0 %                                                
+    Core1_Util           : 0.0 %                                                
+    Average_Util         : 0.0 %                                                
+  Group_Id               : 0                                                    
+  Chip_Id                : 0                                                    
+  SN                     : 0104020100002025003800000020                         
+  PN                     : 100O2010                                             
+  Model                  : LQ50-24GB                                            
+  Firmware_Version       : V1.3.0                                               
+  DDR_Memory_Infos       :                                                      
+    DDR_Memory_Free      : 24448.0MB                                            
+    DDR_Memory_Total     : 24448.0MB                                            
+  Temperature            :                                                      
+    DDR0                 : 39.6 C                                               
+    DDR2                 : 44.4 C                                               
+    DDR4                 : 41.8 C                                               
+    DDR5                 : 37.9 C                                               
+    Core0                : 44.9 C                                               
+    Core1                : 41.5 C                                               
+  Board_Power            : 6.63 W                                               
+--------------------------------------------------------------------------------
