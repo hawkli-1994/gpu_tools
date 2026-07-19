@@ -1,0 +1,60 @@
+root@ai-box:/home/sysadm# mx-smi --show-temperature --show-usage --show-memory
+mx-smi  version: 2.2.12
+
+=================== MetaX System Management Interface Log ===================
+Timestamp                                         : Sun Jul 19 14:00:37 2026
+
+Attached GPUs                                     : 2
+GPU#0  MXN260  0000:19:00.0
+    Chip Temperature
+        hotspot(sensor1)                          :  38.00 C
+    Board Temperature
+        DrMOS_soc                                 :  28.00 C
+        DrMOS_core                                :  29.00 C
+        tdiode                                    :  31.75 C
+        air-inlet                                 :  25.62 C
+        air-outlet                                :  31.00 C
+
+    Memory
+        vis_vram total                            : 67108864 KB
+        vis_vram used                             : 60917480 KB
+        vis_vram usage                            : 91 %
+        vram total                                : 67108864 KB
+        vram used                                 : 60917480 KB
+        vram usage                                : 91 %
+        xtt total                                 : 49128651 KB
+        xtt used                                  : 214864 KB
+        xtt usage                                 : 0.4 %
+
+    Utilization
+        GPU                                       : 0 %
+        VPUE                                      : 0 %
+        VPUD                                      : 0 %
+
+GPU#1  MXN260  0000:1a:00.0
+    Chip Temperature
+        hotspot(sensor1)                          :  37.50 C
+    Board Temperature
+        DrMOS_soc                                 :  28.00 C
+        DrMOS_core                                :  29.00 C
+        tdiode                                    :  32.75 C
+        air-inlet                                 :  26.12 C
+        air-outlet                                :  31.00 C
+
+    Memory
+        vis_vram total                            : 67108864 KB
+        vis_vram used                             : 2409888 KB
+        vis_vram usage                            : 3.5 %
+        vram total                                : 67108864 KB
+        vram used                                 : 2409888 KB
+        vram usage                                : 3.5 %
+        xtt total                                 : 49128651 KB
+        xtt used                                  : 214864 KB
+        xtt usage                                 : 0.4 %
+
+    Utilization
+        GPU                                       : 0 %
+        VPUE                                      : 0 %
+        VPUD                                      : 0 %
+
+End of Log

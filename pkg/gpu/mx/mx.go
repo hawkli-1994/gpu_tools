@@ -116,6 +116,7 @@ func parseMxOutput(output string) (*gpu.GPUInfoList, error) {
 				if len(parts) == 2 {
 					temp := strings.TrimSpace(parts[1])
 					temp = strings.TrimSuffix(temp, "°C")
+					temp = strings.TrimSuffix(temp, " C")
 					currentGPU.TemperatureEdge = strings.TrimSpace(temp)
 				}
 			}
