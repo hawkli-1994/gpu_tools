@@ -11,6 +11,9 @@ var output string
 //go:embed testdata/meta_2.2.12.txt
 var output212 string
 
+//go:embed testdata/debug-mx.txt
+var output234 string
+
 func TestParseMxOutput(t *testing.T) {
 	gpuList, err := parseMxOutput(output)
 	if err != nil {
@@ -106,6 +109,52 @@ func TestParseMxOutput212(t *testing.T) {
 	}
 	if gpuList.GPUInfos[1].PCIBus != "0000:1a:00.0" {
 		t.Errorf("Expected GPU#1 PCIBus 0000:1a:00.0, got %s", gpuList.GPUInfos[1].PCIBus)
+	}
+}
+
+func TestParseMxOutput234(t *testing.T) {
+	gpuList, err := parseMxOutput(output234)
+	if err != nil {
+		t.Fatalf("parseMxOutput failed: %v", err)
+	}
+
+	if len(gpuList.GPUInfos) != 2 {
+		t.Errorf("Expected 2 GPUs, got %d", len(gpuList.GPUInfos))
+		return
+	}
+
+	// GPU#0
+	if gpuList.GPUInfos[0].Num != 0 {
+		t.Errorf("Expected GPU#0 Num 0, got %d", gpuList.GPUInfos[0].Num)
+	}
+	if gpuList.GPUInfos[0].CardModel != "MXN260" {
+		t.Errorf("Expected GPU#0 CardModel MXN260, got %s", gpuList.GPUInfos[0].CardModel)
+	}
+	if gpuList.GPUInfos[0].TemperatureEdge != "45.75" {
+		t.Errorf("Expected GPU#0 TemperatureEdge 45.75, got %s", gpuList.GPUInfos[0].TemperatureEdge)
+	}
+	if gpuList.GPUInfos[0].VRAMTotalMemory != "68719476736" {
+		t.Errorf("Expected GPU#0 VRAMTotalMemory 68719476736, got %s", gpuList.GPUInfos[0].VRAMTotalMemory)
+	}
+	if gpuList.GPUInfos[0].VRAMTotalUsedMemory != "700903424" {
+		t.Errorf("Expected GPU#0 VRAMTotalUsedMemory 700903424, got %s", gpuList.GPUInfos[0].VRAMTotalUsedMemory)
+	}
+	if gpuList.GPUInfos[0].GPUUse != "0" {
+		t.Errorf("Expected GPU#0 GPUUse 0, got %s", gpuList.GPUInfos[0].GPUUse)
+	}
+	if gpuList.GPUInfos[0].PCIBus != "0000:0c:00.0" {
+		t.Errorf("Expected GPU#0 PCIBus 0000:0c:00.0, got %s", gpuList.GPUInfos[0].PCIBus)
+	}
+
+	// GPU#1
+	if gpuList.GPUInfos[1].Num != 1 {
+		t.Errorf("Expected GPU#1 Num 1, got %d", gpuList.GPUInfos[1].Num)
+	}
+	if gpuList.GPUInfos[1].TemperatureEdge != "44.25" {
+		t.Errorf("Expected GPU#1 TemperatureEdge 44.25, got %s", gpuList.GPUInfos[1].TemperatureEdge)
+	}
+	if gpuList.GPUInfos[1].PCIBus != "0000:0f:00.0" {
+		t.Errorf("Expected GPU#1 PCIBus 0000:0f:00.0, got %s", gpuList.GPUInfos[1].PCIBus)
 	}
 }
 

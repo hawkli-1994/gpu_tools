@@ -28,11 +28,8 @@ func (m *mxCommand) Load() (*gpu.GPUInfoList, error) {
 }
 
 func (m *mxCommand) Available() bool {
-	cmd := exec.Command(mxPath)
-	if err := cmd.Run(); err == nil {
-		return true
-	}
-	return false
+	_, err := exec.LookPath(mxPath)
+	return err == nil
 }
 
 func (m *mxCommand) Vendor() string {
@@ -42,6 +39,7 @@ func (m *mxCommand) Vendor() string {
 func mxCmd() (string, error) {
 	mx := mxPath
 	cmd := exec.Command(mx, "--show-temperature", "--show-usage", "--show-memory")
+	// mx-smi --show-temperature --show-usage --show-memory
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("failed to execute mx-smi command: %v", err)
@@ -121,8 +119,9 @@ func parseMxOutput(output string) (*gpu.GPUInfoList, error) {
 				}
 			}
 
-			// 解析显存总量和使用量 (使用vram而不是vis_vram)
-			if strings.Contains(line, "vram total") && strings.Contains(line, ":") {
+			// 解析显存总量和使用量 (使用vram而不是vis_vram，需用行首匹配避免vis_vram误命中)
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "vram total") && strings.Contains(line, ":") {
 				parts := strings.Split(line, ":")
 				if len(parts) == 2 {
 					mem := strings.TrimSpace(parts[1])
@@ -134,7 +133,7 @@ func parseMxOutput(output string) (*gpu.GPUInfoList, error) {
 				}
 			}
 
-			if strings.Contains(line, "vram used") && strings.Contains(line, ":") {
+			if strings.HasPrefix(trimmed, "vram used") && strings.Contains(line, ":") {
 				parts := strings.Split(line, ":")
 				if len(parts) == 2 {
 					mem := strings.TrimSpace(parts[1])

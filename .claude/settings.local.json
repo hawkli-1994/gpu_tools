@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ssh:*)",
+      "Bash(go build:*)",
+      "Bash(git:*)",
+      "Bash(go test:*)",
+      "Bash(go get:*)",
+      "Bash(go mod:*)",
+      "Bash(make arm-deb:*)",
+      "Bash(scp:*)"
+    ]
+  }
+}
