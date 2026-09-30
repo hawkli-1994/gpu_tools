@@ -8,9 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
+	"slices"
 	"strings"
-	"sync"
 
 	"github.com/hawkli-1994/gpu_tools/pkg/gpu"
 )
@@ -20,14 +19,8 @@ func init() {
 	gpu.Register(&ixGPU{})
 }
 
-const (
-	// ixsmiPath    = "$PATH:/usr/local/corex-4.2.0/bin"
-	// ixsmiLibPath = "$LD_LIBRARY_PATH:/usr/local/corex-4.2.0/lib:/usr/local/corex-4.2.0/lib64"
-)
-
 var logger = slog.New(slog.NewTextHandler(os.Stdout, nil))
 var smiPaths = []string{}
-var envOnce sync.Once
 
 // scanCorexSmiPaths 扫描指定目录下所有以 corex 开头的文件夹，并返回对应的 ixsmi 路径
 func scanCorexSmiPaths(rootDir string) []string {
@@ -52,7 +45,7 @@ func scanCorexSmiPaths(rootDir string) []string {
 	}
 
 	// 可选：对路径进行排序，确保版本顺序
-	sort.Strings(paths)
+	slices.Sort(paths)
 	return paths
 }
 
@@ -65,20 +58,33 @@ func autoFindSmiPath() string {
 	return ""
 }
 
-// setupIxsmmiEnv 设置 ixsmi 所需的环境变量（仅首次调用生效）
-func setupIxsmmiEnv(smiPath string) {
-	envOnce.Do(func() {
-		smiDir := strings.TrimSuffix(smiPath, "/bin/ixsmi")
-		ixsmiLibPath := fmt.Sprintf("%s/lib:%s/lib64", smiDir, smiDir)
+// ixsmiEnv 返回运行 ixsmi 所需的环境变量：将 corex 工具包的 bin/lib
+// 目录前置到 PATH 和 LD_LIBRARY_PATH。只作用于单个子进程，
+// 不修改 dauadm-server 进程自身的全局环境，避免影响其他 GPU loader。
+func ixsmiEnv(smiPath string) []string {
+	smiDir := strings.TrimSuffix(smiPath, "/bin/ixsmi")
+	overrides := map[string]string{
+		"PATH":            smiDir + "/bin:" + os.Getenv("PATH"),
+		"LD_LIBRARY_PATH": fmt.Sprintf("%s/lib:%s/lib64:%s", smiDir, smiDir, os.Getenv("LD_LIBRARY_PATH")),
+	}
 
-		oldPath := os.Getenv("PATH")
-		os.Setenv("PATH", smiDir+"/bin:"+oldPath)
-
-		oldLibPath := os.Getenv("LD_LIBRARY_PATH")
-		os.Setenv("LD_LIBRARY_PATH", ixsmiLibPath+":"+oldLibPath)
-
-		logger.Info("ixGPU env", "PATH", os.Getenv("PATH"), "LD_LIBRARY_PATH", os.Getenv("LD_LIBRARY_PATH"))
-	})
+	env := make([]string, 0, len(os.Environ())+len(overrides))
+	seen := make(map[string]bool, len(overrides))
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		if v, ok := overrides[k]; ok {
+			env = append(env, k+"="+v)
+			seen[k] = true
+		} else {
+			env = append(env, kv)
+		}
+	}
+	for k, v := range overrides {
+		if !seen[k] {
+			env = append(env, k+"="+v)
+		}
+	}
+	return env
 }
 
 type ixGPU struct {
@@ -90,9 +96,9 @@ func (a *ixGPU) Load() (*gpu.GPUInfoList, error) {
 		logger.Error("ixGPU Load autoFindSmiPath", "smiPath", smiPath, "error", fmt.Errorf("ixsmi not found"))
 		return nil, fmt.Errorf("ixsmi not found")
 	}
-	setupIxsmmiEnv(smiPath)
 
 	cmd := exec.Command(smiPath, "-q", "-x")
+	cmd.Env = ixsmiEnv(smiPath)
 	data, err := cmd.Output()
 	if err != nil {
 		logger.Error("ixGPU Load get data", "cmd", cmd.String(), "error", err)
@@ -123,7 +129,6 @@ func (a *ixGPU) Available() bool {
 		return false
 	}
 	logger.Info("ixGPU Available", "smiPath", smiPath)
-	setupIxsmmiEnv(smiPath)
 
 	_, err := exec.LookPath(smiPath)
 	if err != nil {
@@ -131,8 +136,11 @@ func (a *ixGPU) Available() bool {
 		return false
 	}
 	cmd := exec.Command(smiPath, "-q", "-x")
+	cmd.Env = ixsmiEnv(smiPath)
 	if err := cmd.Run(); err != nil {
-		logger.Error("ixGPU test ixsmi", "cmd", cmd.String(), "error", err)
+		// 无 Iluvatar GPU 或未装驱动时 ixsmi 会失败（如 exit 255），
+		// 这是预期情况，降级为 Info 避免误导为故障
+		logger.Info("ixGPU test ixsmi failed, skipping Iluvatar loader", "cmd", cmd.String(), "error", err)
 		return false
 	}
 	logger.Info("ixGPU Available success", "cmd", cmd.String(), "return", true)

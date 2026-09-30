@@ -7,69 +7,63 @@ import (
 	"testing"
 )
 
-func TestSetupIxsmmiEnv(t *testing.T) {
+func envValue(t *testing.T, env []string, key string) string {
+	t.Helper()
+	prefix := key + "="
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, prefix); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+func TestIxsmmiEnv(t *testing.T) {
 	// 创建临时目录结构
 	tmpDir := t.TempDir()
 	binDir := filepath.Join(tmpDir, "bin")
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		t.Fatalf("failed to create bin dir: %v", err)
 	}
-	// 创建假的 ixsmi 文件
 	ixsmiPath := filepath.Join(binDir, "ixsmi")
 	if err := os.WriteFile(ixsmiPath, []byte("#!/bin/bash"), 0755); err != nil {
 		t.Fatalf("failed to create ixsmi: %v", err)
 	}
 
-	// 保存原始环境变量
-	origPath := os.Getenv("PATH")
-	origLibPath := os.Getenv("LD_LIBRARY_PATH")
-	defer func() {
-		os.Setenv("PATH", origPath)
-		os.Setenv("LD_LIBRARY_PATH", origLibPath)
-	}()
+	env := ixsmiEnv(ixsmiPath)
 
-	// 调用 setupIxsmmiEnv
-	setupIxsmmiEnv(ixsmiPath)
-
-	// 验证 PATH
-	newPath := os.Getenv("PATH")
-	if !strings.Contains(newPath, binDir) {
-		t.Errorf("PATH should contain %s, got %s", binDir, newPath)
-	}
-	if !strings.HasPrefix(newPath, binDir) {
+	// 验证 PATH 前置了 corex bin 目录，且保留原值
+	newPath := envValue(t, env, "PATH")
+	if !strings.HasPrefix(newPath, binDir+":") {
 		t.Errorf("PATH should start with %s, got %s", binDir, newPath)
 	}
-
-	// 验证 LD_LIBRARY_PATH
-	newLibPath := os.Getenv("LD_LIBRARY_PATH")
-	expectedLibDir := filepath.Join(tmpDir, "lib")
-	expectedLib64Dir := filepath.Join(tmpDir, "lib64")
-	if !strings.Contains(newLibPath, expectedLibDir) {
-		t.Errorf("LD_LIBRARY_PATH should contain %s, got %s", expectedLibDir, newLibPath)
+	if !strings.Contains(newPath, os.Getenv("PATH")) {
+		t.Errorf("PATH should preserve old value %s, got %s", os.Getenv("PATH"), newPath)
 	}
-	if !strings.Contains(newLibPath, expectedLib64Dir) {
-		t.Errorf("LD_LIBRARY_PATH should contain %s, got %s", expectedLib64Dir, newLibPath)
+
+	// 验证 LD_LIBRARY_PATH 包含 corex lib 目录，且保留原值
+	newLibPath := envValue(t, env, "LD_LIBRARY_PATH")
+	for _, dir := range []string{filepath.Join(tmpDir, "lib"), filepath.Join(tmpDir, "lib64")} {
+		if !strings.Contains(newLibPath, dir) {
+			t.Errorf("LD_LIBRARY_PATH should contain %s, got %s", dir, newLibPath)
+		}
+	}
+	if old := os.Getenv("LD_LIBRARY_PATH"); old != "" && !strings.Contains(newLibPath, old) {
+		t.Errorf("LD_LIBRARY_PATH should preserve old value %s, got %s", old, newLibPath)
 	}
 }
 
-func TestSetupIxsmmiEnvPreservesOldValues(t *testing.T) {
-	// 设置已有的环境变量
-	os.Setenv("PATH", "/usr/bin")
-	os.Setenv("LD_LIBRARY_PATH", "/usr/lib")
+func TestIxsmmiEnvDoesNotMutateGlobalEnv(t *testing.T) {
+	origPath := os.Getenv("PATH")
+	origLibPath := os.Getenv("LD_LIBRARY_PATH")
 
-	ixsmiPath := "/usr/local/corex-4.4.0/bin/ixsmi"
+	ixsmiEnv("/usr/local/corex-4.4.0/bin/ixsmi")
 
-	setupIxsmmiEnv(ixsmiPath)
-
-	// 验证原有值被保留
-	newPath := os.Getenv("PATH")
-	if !strings.Contains(newPath, "/usr/bin") {
-		t.Errorf("PATH should preserve old value /usr/bin, got %s", newPath)
+	if os.Getenv("PATH") != origPath {
+		t.Errorf("global PATH mutated: got %s, want %s", os.Getenv("PATH"), origPath)
 	}
-
-	newLibPath := os.Getenv("LD_LIBRARY_PATH")
-	if !strings.Contains(newLibPath, "/usr/lib") {
-		t.Errorf("LD_LIBRARY_PATH should preserve old value /usr/lib, got %s", newLibPath)
+	if os.Getenv("LD_LIBRARY_PATH") != origLibPath {
+		t.Errorf("global LD_LIBRARY_PATH mutated: got %s, want %s", os.Getenv("LD_LIBRARY_PATH"), origLibPath)
 	}
 }
 
