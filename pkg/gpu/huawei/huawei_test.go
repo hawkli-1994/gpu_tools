@@ -37,36 +37,157 @@ func TestExtractNPUIDs(t *testing.T) {
 	}
 }
 
-func TestParseChipSections(t *testing.T) {
-	t.Run("forward", func(t *testing.T) {
-		got := parseChipSections([]byte(`NPU ID : 2944
-Chip Count : 2
-Chip ID : 0
-Aicore Usage Rate(%) : 0
-Temperature(C) : 45
-Chip ID : 1
-Temperature(C) : 47
-Chip Name : mcu
-Temperature(C) : 48`))
-		require.Len(t, got, 2)
+func TestParseChipSectionsForward(t *testing.T) {
+	t.Run("single_chip", func(t *testing.T) {
+		input := `NPU ID                         : 2944
+Chip Count                     : 2
+
+Chip ID                        : 0
+Memory Usage Rate(%)           : 2
+Aicore Usage Rate(%)           : 0
+Temperature(C)                 : 45`
+		got := parseChipSections([]byte(input))
+		assert.NotNil(t, got)
+		assert.Len(t, got, 1)
+		assert.Equal(t, "45", got["0"]["Temperature(C)"])
+		assert.Equal(t, "0", got["0"]["Aicore Usage Rate(%)"])
+	})
+
+	t.Run("dual_chip_with_mcu", func(t *testing.T) {
+		input := `NPU ID                         : 2944
+Chip Count                     : 2
+
+Chip ID                        : 0
+Memory Usage Rate(%)           : 2
+Aicore Usage Rate(%)           : 0
+Temperature(C)                 : 45
+
+Chip ID                        : 1
+Memory Usage Rate(%)           : 3
+Aicore Usage Rate(%)           : 0
+Temperature(C)                 : 47
+
+Chip Name                      : mcu
+Temperature(C)                 : 48
+NPU Real-time Power(W)         : 42.8`
+		got := parseChipSections([]byte(input))
+		assert.NotNil(t, got)
+		assert.Len(t, got, 2)
 		assert.Equal(t, "45", got["0"]["Temperature(C)"])
 		assert.Equal(t, "47", got["1"]["Temperature(C)"])
-		assert.NotContains(t, got["1"], "Chip Name")
+		_, ok := got["1"]["NPU Real-time Power(W)"]
+		assert.False(t, ok, "MCU power should not leak into chip 1")
+		_, ok = got["1"]["Chip Name"]
+		assert.False(t, ok, "MCU chip name should not leak into chip 1")
 	})
-	t.Run("reverse", func(t *testing.T) {
-		got := parseChipSections([]byte(`NPU ID : 2944
-DDR Capacity(MB) : 44278
-DDR Usage Rate(%) : 2
-Chip ID : 0
-DDR Capacity(MB) : 43693
-DDR Usage Rate(%) : 3
-Chip ID : 1`))
-		require.Len(t, got, 2)
+
+	t.Run("empty_after_filter", func(t *testing.T) {
+		input := `NPU ID                         : 2944
+Chip Count                     : 2`
+		got := parseChipSections([]byte(input))
+		assert.Nil(t, got)
+	})
+
+	t.Run("no_chip_id", func(t *testing.T) {
+		input := `NPU ID                         : 2944
+Chip Count                     : 2
+Power Dissipation(W)           : 42.9`
+		got := parseChipSections([]byte(input))
+		assert.Nil(t, got)
+	})
+}
+
+func TestParseChipSectionsReverse(t *testing.T) {
+	t.Run("usages_dual_chip", func(t *testing.T) {
+		input := `NPU ID                         : 2944
+Chip Count                     : 2
+
+DDR Capacity(MB)               : 44278
+DDR Usage Rate(%)              : 2
+Aicore Usage Rate(%)           : 0
+Chip ID                        : 0
+
+DDR Capacity(MB)               : 43693
+DDR Usage Rate(%)              : 3
+Aicore Usage Rate(%)           : 0
+Chip ID                        : 1`
+		got := parseChipSections([]byte(input))
+		assert.NotNil(t, got)
+		assert.Len(t, got, 2)
 		assert.Equal(t, "44278", got["0"]["DDR Capacity(MB)"])
+		assert.Equal(t, "2", got["0"]["DDR Usage Rate(%)"])
+		assert.Equal(t, "43693", got["1"]["DDR Capacity(MB)"])
 		assert.Equal(t, "3", got["1"]["DDR Usage Rate(%)"])
 	})
-	t.Run("no_chips", func(t *testing.T) {
-		assert.Nil(t, parseChipSections([]byte("NPU ID : 2944\nChip Count : 2")))
+
+	t.Run("memory_dual_chip", func(t *testing.T) {
+		input := `NPU ID                         : 2944
+Chip Count                     : 2
+
+Total DDR Capacity(MB)         : 49152
+DDR Capacity(MB)               : 44278
+DDR Clock Speed(MHz)           : 451
+Chip ID                        : 0
+
+Total DDR Capacity(MB)         : 49152
+DDR Capacity(MB)               : 43693
+DDR Clock Speed(MHz)           : 451
+Chip ID                        : 1`
+		got := parseChipSections([]byte(input))
+		assert.NotNil(t, got)
+		assert.Len(t, got, 2)
+		assert.Equal(t, "44278", got["0"]["DDR Capacity(MB)"])
+		assert.Equal(t, "451", got["0"]["DDR Clock Speed(MHz)"])
+		assert.Equal(t, "43693", got["1"]["DDR Capacity(MB)"])
+	})
+
+	t.Run("product_dual_chip", func(t *testing.T) {
+		input := `NPU ID                         : 2944
+Chip Count                     : 2
+
+Product Type                   : Atlas 300I Duo
+Chip ID                        : 0
+
+Product Type                   : Atlas 300I Duo
+Chip ID                        : 1`
+		got := parseChipSections([]byte(input))
+		assert.NotNil(t, got)
+		assert.Len(t, got, 2)
+		assert.Equal(t, "Atlas 300I Duo", got["0"]["Product Type"])
+		assert.Equal(t, "Atlas 300I Duo", got["1"]["Product Type"])
+	})
+
+	t.Run("health_dual_chip_with_mcu", func(t *testing.T) {
+		input := `NPU ID                         : 2944
+Chip Count                     : 2
+
+Health                         : OK
+Chip ID                        : 0
+
+Health                         : OK
+Chip ID                        : 1
+
+Health                         : OK
+Chip Name                      : MCU`
+		got := parseChipSections([]byte(input))
+		assert.NotNil(t, got)
+		assert.Len(t, got, 2)
+		assert.Equal(t, "OK", got["0"]["Health"])
+		assert.Equal(t, "OK", got["1"]["Health"])
+		_, ok := got["mcu"]
+		assert.False(t, ok, "MCU should not appear as a chip")
+	})
+
+	t.Run("single_chip", func(t *testing.T) {
+		input := `NPU ID                         : 1234
+Chip Count                     : 1
+
+DDR Capacity(MB)               : 22000
+Chip ID                        : 0`
+		got := parseChipSections([]byte(input))
+		assert.NotNil(t, got)
+		assert.Len(t, got, 1)
+		assert.Equal(t, "22000", got["0"]["DDR Capacity(MB)"])
 	})
 }
 
