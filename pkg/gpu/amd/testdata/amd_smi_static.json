@@ -1,0 +1,36 @@
+{
+  "gpu_data": [
+    {
+      "gpu": 1,
+      "asic": {
+        "market_name": "AMD Radeon PRO W7900 Dual Slot ",
+        "vendor_name": "Advanced Micro Devices Inc. [AMD/ATI]",
+        "device_id": "0x744a",
+        "rev_id": "0x00",
+        "asic_serial": "0xDBA7EBE13A88DDBD"
+      },
+      "bus": {"bdf": "0000:13:00.0"},
+      "board": {
+        "model_number": "N/A",
+        "manufacturer_name": "Advanced Micro Devices, Inc. [AMD/ATI]"
+      },
+      "vram": {"size": {"value": 46064, "unit": "MB"}}
+    },
+    {
+      "gpu": 0,
+      "asic": {
+        "market_name": "AMD Radeon PRO W7900 Dual Slot ",
+        "vendor_name": "Advanced Micro Devices Inc. [AMD/ATI]",
+        "device_id": "0x744a",
+        "rev_id": "0x00",
+        "asic_serial": "0xDC5D0656268643EC"
+      },
+      "bus": {"bdf": "0000:0e:00.0"},
+      "board": {
+        "model_number": "N/A",
+        "manufacturer_name": "N/A"
+      },
+      "vram": {"size": {"value": 46064, "unit": "MB"}}
+    }
+  ]
+}

@@ -1,9 +1,12 @@
 package dl
 
 import (
+	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"math"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -11,22 +14,21 @@ import (
 	"github.com/hawkli-1994/gpu_tools/pkg/gpu"
 )
 
-func init() {
-	gpu.Register(&dlsmiCommand{})
+func New() *dlsmiCommand {
+	return &dlsmiCommand{}
 }
 
-type dlsmiCommand struct {
-}
+type dlsmiCommand struct{}
 
-func (d *dlsmiCommand) Load() (*gpu.GPUInfoList, error) {
-	output, err := d.query()
+func (d *dlsmiCommand) Load(ctx context.Context) ([]gpu.GPUInfo, error) {
+	output, err := d.query(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return parseDLSMIOutput(output)
 }
 
-func (d *dlsmiCommand) query() ([]byte, error) {
+func (d *dlsmiCommand) query(ctx context.Context) ([]byte, error) {
 	candidates := [][]string{
 		{"dlsmi", "query", "--xml-format"},
 		{"/usr/bin/dlsmi", "query", "--xml-format"},
@@ -35,33 +37,27 @@ func (d *dlsmiCommand) query() ([]byte, error) {
 
 	var lastErr error
 	for _, args := range candidates {
-		cmd := exec.Command(args[0], args[1:]...)
+		cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 		output, err := cmd.CombinedOutput()
 		if err == nil {
 			return output, nil
 		}
-		lastErr = fmt.Errorf("dlsmi (%s) failed: %w: %s", args[0], err, strings.TrimSpace(string(output)))
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, &gpu.OpError{Vendor: d.Vendor(), Op: "query", Command: strings.Join(args, " "), Err: ctxErr}
+		}
+		if message := strings.TrimSpace(string(output)); message != "" {
+			err = fmt.Errorf("%w: %s", err, message)
+		}
+		lastErr = &gpu.OpError{Vendor: d.Vendor(), Op: "query", Command: strings.Join(args, " "), Err: err}
+		if !errors.Is(err, exec.ErrNotFound) && !errors.Is(err, os.ErrNotExist) {
+			return nil, lastErr
+		}
 	}
 
 	if lastErr == nil {
-		lastErr = fmt.Errorf("dlsmi command not found")
+		lastErr = errors.New("dlsmi command not found")
 	}
-	return nil, lastErr
-}
-
-func (d *dlsmiCommand) Available() bool {
-	paths := []string{
-		"dlsmi",
-		"/usr/bin/dlsmi",
-		"/usr/local/bin/dlsmi",
-	}
-
-	for _, p := range paths {
-		if _, err := exec.LookPath(p); err == nil {
-			return true
-		}
-	}
-	return false
+	return nil, fmt.Errorf("%w: %w", gpu.ErrUnavailable, lastErr)
 }
 
 func (d *dlsmiCommand) Vendor() string {
@@ -119,41 +115,51 @@ type dlsmiPowerReadings struct {
 	PowerDraw string `xml:"power_draw"`
 }
 
-func parseDLSMIOutput(output []byte) (*gpu.GPUInfoList, error) {
+func parseDLSMIOutput(output []byte) ([]gpu.GPUInfo, error) {
 	var log dlsmiLog
 	if err := xml.Unmarshal(output, &log); err != nil {
 		return nil, fmt.Errorf("parse dlsmi output: %w", err)
 	}
 
-	gpuInfos := make([]gpu.GPUInfo, 0, len(log.GPUs))
-	for idx, gpuNode := range log.GPUs {
+	infos := make([]gpu.GPUInfo, 0, len(log.GPUs))
+	for idx, node := range log.GPUs {
 		info := gpu.GPUInfo{
-			Num:                         idx,
-			DeviceID:                    strings.TrimSpace(gpuNode.PCI.DeviceID),
-			DeviceRev:                   strings.TrimSpace(gpuNode.FirmwareVersion),
-			SerialNumber:                strings.TrimSpace(gpuNode.SerialNumber),
-			CardSeries:                  strings.TrimSpace(gpuNode.ProductArchitecture),
-			CardModel:                   strings.TrimSpace(gpuNode.ProductName),
-			CardVendor:                  resolveVendor(gpuNode.ProductBrand),
-			CardSKU:                     strings.TrimSpace(gpuNode.BoardPartNumber),
-			PCIBus:                      resolveBusID(gpuNode),
-			VRAMTotalMemory:             convertSizeToBytes(gpuNode.MemoryUsage.Total),
-			VRAMTotalUsedMemory:         convertSizeToBytes(gpuNode.MemoryUsage.Used),
-			GPUUse:                      parseNumericField(gpuNode.Utilization.GPU),
-			TemperatureEdge:             parseNumericField(gpuNode.Temperature.GPUCurrent),
-			TemperatureJunction:         parseNumericField(gpuNode.Temperature.GPUSlowdown),
-			TemperatureMemory:           parseNumericField(gpuNode.Temperature.MemoryCurrent),
-			AverageGraphicsPackagePower: parseNumericField(gpuNode.PowerReadings.PowerDraw),
+			Num:          idx,
+			DeviceID:     strings.TrimSpace(node.PCI.DeviceID),
+			DeviceRev:    strings.TrimSpace(node.FirmwareVersion),
+			SerialNumber: strings.TrimSpace(node.SerialNumber),
+			CardSeries:   strings.TrimSpace(node.ProductArchitecture),
+			CardModel:    strings.TrimSpace(node.ProductName),
+			CardVendor:   resolveVendor(node.ProductBrand),
+			CardSKU:      strings.TrimSpace(node.BoardPartNumber),
+			PCIBus:       resolveBusID(node),
 		}
-
 		if info.DeviceID == "" {
-			info.DeviceID = strings.TrimSpace(gpuNode.ID)
+			info.DeviceID = strings.TrimSpace(node.ID)
 		}
 
-		gpuInfos = append(gpuInfos, info)
+		var err error
+		if info.VRAMTotalMemory, err = convertSizeToBytes(node.MemoryUsage.Total); err != nil {
+			return nil, fmt.Errorf("parse dlsmi gpu %d total memory: %w", idx, err)
+		}
+		if info.VRAMTotalUsedMemory, err = convertSizeToBytes(node.MemoryUsage.Used); err != nil {
+			return nil, fmt.Errorf("parse dlsmi gpu %d used memory: %w", idx, err)
+		}
+		if info.GPUUse, err = parseNumericField(node.Utilization.GPU); err != nil {
+			return nil, fmt.Errorf("parse dlsmi gpu %d utilization: %w", idx, err)
+		}
+		if info.TemperatureEdge, err = parseNumericField(node.Temperature.GPUCurrent); err != nil {
+			return nil, fmt.Errorf("parse dlsmi gpu %d current temperature: %w", idx, err)
+		}
+		if info.TemperatureMemory, err = parseNumericField(node.Temperature.MemoryCurrent); err != nil {
+			return nil, fmt.Errorf("parse dlsmi gpu %d memory temperature: %w", idx, err)
+		}
+		if info.AverageGraphicsPackagePower, err = parseNumericField(node.PowerReadings.PowerDraw); err != nil {
+			return nil, fmt.Errorf("parse dlsmi gpu %d power draw: %w", idx, err)
+		}
+		infos = append(infos, info)
 	}
-
-	return &gpu.GPUInfoList{GPUInfos: gpuInfos}, nil
+	return infos, nil
 }
 
 func resolveVendor(productBrand string) string {
@@ -170,70 +176,56 @@ func resolveBusID(g dlsmiGPU) string {
 	return strings.TrimSpace(g.ID)
 }
 
-func parseNumericField(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" || strings.EqualFold(value, "N/A") {
-		return "0"
-	}
+func parseNumericField(value string) (*float64, error) {
 	fields := strings.Fields(value)
 	if len(fields) == 0 {
-		return "0"
+		return nil, nil
 	}
-
-	numStr := strings.Trim(fields[0], "+")
-	num, err := strconv.ParseFloat(numStr, 64)
+	parsed, err := gpu.ParseFloat(strings.TrimPrefix(fields[0], "+"))
 	if err != nil {
-		return "0"
+		return nil, fmt.Errorf("parse %q: %w", value, err)
 	}
-
-	if math.Abs(num-math.Round(num)) < 1e-6 {
-		return strconv.FormatInt(int64(math.Round(num)), 10)
+	if parsed != nil && (math.IsNaN(*parsed) || math.IsInf(*parsed, 0)) {
+		return nil, fmt.Errorf("parse %q: non-finite value", value)
 	}
-	return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", num), "0"), ".")
+	return parsed, nil
 }
 
-func convertSizeToBytes(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" || strings.EqualFold(value, "N/A") {
-		return "0"
-	}
+func convertSizeToBytes(value string) (*uint64, error) {
 	fields := strings.Fields(value)
-	if len(fields) == 0 {
-		return "0"
+	if len(fields) == 0 || strings.EqualFold(strings.TrimSpace(value), "N/A") {
+		return nil, nil
 	}
-
-	num, err := strconv.ParseFloat(fields[0], 64)
+	num, err := strconv.ParseFloat(strings.TrimPrefix(fields[0], "+"), 64)
 	if err != nil {
-		return "0"
+		return nil, fmt.Errorf("parse %q: %w", value, err)
+	}
+	if math.IsNaN(num) || math.IsInf(num, 0) || num < 0 {
+		return nil, fmt.Errorf("parse %q: invalid size", value)
 	}
 
 	unit := "B"
 	if len(fields) > 1 {
 		unit = strings.ToUpper(strings.TrimSuffix(fields[1], "s"))
 	}
-
+	multiplier := float64(1)
 	switch unit {
 	case "B":
 	case "KB", "KIB":
-		num *= 1024
+		multiplier = 1024
 	case "MB", "MIB":
-		num *= 1024 * 1024
+		multiplier = 1024 * 1024
 	case "GB", "GIB":
-		num *= 1024 * 1024 * 1024
+		multiplier = 1024 * 1024 * 1024
 	case "TB", "TIB":
-		num *= 1024 * 1024 * 1024 * 1024
+		multiplier = 1024 * 1024 * 1024 * 1024
 	default:
-		// best effort for strings like "MiB"
-		if strings.Contains(unit, "IB") {
-			if strings.HasPrefix(unit, "M") {
-				num *= 1024 * 1024
-			} else if strings.HasPrefix(unit, "G") {
-				num *= 1024 * 1024 * 1024
-			} else if strings.HasPrefix(unit, "K") {
-				num *= 1024
-			}
-		}
+		return nil, fmt.Errorf("parse %q: unsupported size unit %q", value, fields[1])
 	}
 
-	return strconv.FormatInt(int64(math.Round(num)), 10)
+	bytes := math.Round(num * multiplier)
+	if bytes < 0 || bytes >= math.Exp2(64) {
+		return nil, fmt.Errorf("parse %q: size out of range", value)
+	}
+	return gpu.Uint64(uint64(bytes)), nil
 }

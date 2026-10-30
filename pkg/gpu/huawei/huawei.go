@@ -3,80 +3,91 @@ package huawei
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
+	"math"
+	"os"
 	"os/exec"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/hawkli-1994/gpu_tools/pkg/gpu"
 )
 
-func init() {
-	gpu.Register(&npuSMICommand{})
-}
-
 func New() *npuSMICommand {
 	return &npuSMICommand{}
 }
 
-type npuSMICommand struct {
-	smiPath string
-}
-
-func (h *npuSMICommand) Available() bool {
-	if h.smiPath != "" {
-		return true
-	}
-	if _, err := exec.LookPath("npu-smi"); err == nil {
-		h.smiPath = "npu-smi"
-		return true
-	}
-	if _, err := exec.LookPath("/usr/local/sbin/npu-smi"); err == nil {
-		h.smiPath = "/usr/local/sbin/npu-smi"
-		return true
-	}
-	return false
-}
+type npuSMICommand struct{}
 
 func (h *npuSMICommand) Vendor() string {
 	return "Huawei"
 }
 
-func (h *npuSMICommand) Load() (*gpu.GPUInfoList, error) {
-	if h.smiPath == "" {
-		h.Available()
+func (h *npuSMICommand) Load(ctx context.Context) ([]gpu.GPUInfo, error) {
+	smiPath, err := findSMIPath()
+	if err != nil {
+		return nil, err
 	}
-	if h.smiPath == "" {
-		return nil, fmt.Errorf("npu-smi command not found")
-	}
-	cmd := exec.Command(h.smiPath, "info")
+	cmd := exec.CommandContext(ctx, smiPath, "info")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute npu-smi info: %v", err)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, &gpu.OpError{Vendor: h.Vendor(), Op: "list NPUs", Command: cmd.String(), Err: ctxErr}
+		}
+		if message := strings.TrimSpace(string(output)); message != "" {
+			err = fmt.Errorf("%w: %s", err, message)
+		}
+		return nil, &gpu.OpError{Vendor: h.Vendor(), Op: "list NPUs", Command: cmd.String(), Err: err}
 	}
 
 	npuIDs, err := extractNPUIDs(output)
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract NPU IDs: %v", err)
+		return nil, fmt.Errorf("extract NPU IDs: %w", err)
 	}
 
-	result := &gpu.GPUInfoList{GPUInfos: []gpu.GPUInfo{}}
+	result := make([]gpu.GPUInfo, 0)
 	globalNum := 0
-
 	for _, npuID := range npuIDs {
-		boardInfo, _ := h.getBoardInfo(npuID)
-		commonInfo, _ := h.getCommonInfo(npuID)
-		usagesInfo, _ := h.getUsagesInfo(npuID)
-		productInfo, _ := h.getProductInfo(npuID)
-		powerInfo, _ := h.getPowerInfo(npuID)
+		boardInfo, err := h.getBoardInfo(ctx, smiPath, npuID)
+		if err != nil {
+			return nil, err
+		}
+		commonInfo, err := h.getCommonInfo(ctx, smiPath, npuID)
+		if err != nil {
+			return nil, err
+		}
+		usagesInfo, err := h.getUsagesInfo(ctx, smiPath, npuID)
+		if err != nil {
+			return nil, err
+		}
+		productInfo, err := h.getProductInfo(ctx, smiPath, npuID)
+		if err != nil {
+			return nil, err
+		}
+		powerInfo, err := h.getPowerInfo(ctx, smiPath, npuID)
+		if err != nil {
+			return nil, err
+		}
 
-		infos, nextNum := buildGPUInfoList(npuID, boardInfo, commonInfo, usagesInfo, productInfo, powerInfo, globalNum)
-		result.GPUInfos = append(result.GPUInfos, infos...)
+		infos, nextNum, err := buildGPUInfoList(npuID, boardInfo, commonInfo, usagesInfo, productInfo, powerInfo, globalNum)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, infos...)
 		globalNum = nextNum
 	}
-
 	return result, nil
+}
+
+func findSMIPath() (string, error) {
+	for _, path := range []string{"npu-smi", "/usr/local/sbin/npu-smi"} {
+		if _, err := exec.LookPath(path); err == nil {
+			return path, nil
+		}
+	}
+	return "", &gpu.OpError{Vendor: "Huawei", Op: "find npu-smi", Err: fmt.Errorf("npu-smi command not found: %w", gpu.ErrUnavailable)}
 }
 
 func buildGPUInfoList(
@@ -87,22 +98,12 @@ func buildGPUInfoList(
 	product map[string]map[string]string,
 	power map[string]string,
 	globalNum int,
-) ([]gpu.GPUInfo, int) {
-	powerVal := "0"
-	if power != nil {
-		if v, ok := power["Power Dissipation(W)"]; ok && v != "" && v != "NA" {
-			powerVal = v
-		}
+) ([]gpu.GPUInfo, int, error) {
+	powerValue, err := parseHuaweiFloat(power["Power Dissipation(W)"])
+	if err != nil {
+		return nil, globalNum, fmt.Errorf("parse NPU %s Power Dissipation(W): %w", npuID, err)
 	}
 
-	serialNumber := ""
-	pciBus := ""
-	if board != nil {
-		serialNumber = board["Serial Number"]
-		pciBus = board["PCIe Bus Info"]
-	}
-
-	// Collect all known chip IDs
 	chipIDSet := make(map[string]struct{})
 	for chipID := range common {
 		chipIDSet[chipID] = struct{}{}
@@ -113,68 +114,66 @@ func buildGPUInfoList(
 	for chipID := range product {
 		chipIDSet[chipID] = struct{}{}
 	}
-
 	if len(chipIDSet) == 0 {
-		return nil, globalNum
+		return nil, globalNum, nil
 	}
 
-	var chipIDs []string
+	chipIDs := make([]string, 0, len(chipIDSet))
 	for chipID := range chipIDSet {
 		chipIDs = append(chipIDs, chipID)
 	}
 	sort.Strings(chipIDs)
 
-	var infos []gpu.GPUInfo
+	infos := make([]gpu.GPUInfo, 0, len(chipIDs))
 	for _, chipID := range chipIDs {
 		chipCommon := common[chipID]
 		chipUsages := usages[chipID]
 		chipProduct := product[chipID]
 
-		// Temperature
-		temp := "0"
-		if chipCommon != nil {
-			if v, ok := chipCommon["Temperature(C)"]; ok && v != "" && v != "NA" {
-				temp = v
+		temp, err := parseHuaweiFloat(chipCommon["Temperature(C)"])
+		if err != nil {
+			return nil, globalNum, fmt.Errorf("parse NPU %s chip %s Temperature(C): %w", npuID, chipID, err)
+		}
+		gpuUse, err := parseHuaweiFloat(chipUsages["Aicore Usage Rate(%)"])
+		if err != nil {
+			return nil, globalNum, fmt.Errorf("parse NPU %s chip %s usages Aicore Usage Rate(%%): %w", npuID, chipID, err)
+		}
+		if gpuUse == nil {
+			gpuUse, err = parseHuaweiFloat(chipCommon["Aicore Usage Rate(%)"])
+			if err != nil {
+				return nil, globalNum, fmt.Errorf("parse NPU %s chip %s common Aicore Usage Rate(%%): %w", npuID, chipID, err)
 			}
 		}
 
-		// GPU Use: prefer usages Aicore, fallback to common Aicore
-		gpuUse := "0"
-		if chipUsages != nil {
-			if v, ok := chipUsages["Aicore Usage Rate(%)"]; ok && v != "" && v != "NA" {
-				gpuUse = v
-			}
+		capacityMB, err := parseHuaweiFloat(chipUsages["DDR Capacity(MB)"])
+		if err != nil {
+			return nil, globalNum, fmt.Errorf("parse NPU %s chip %s DDR Capacity(MB): %w", npuID, chipID, err)
 		}
-		if gpuUse == "0" && chipCommon != nil {
-			if v, ok := chipCommon["Aicore Usage Rate(%)"]; ok && v != "" && v != "NA" {
-				gpuUse = v
+		var totalBytes *uint64
+		if capacityMB != nil {
+			bytes := *capacityMB * 1024 * 1024
+			if *capacityMB < 0 || bytes >= math.Exp2(64) {
+				return nil, globalNum, fmt.Errorf("parse NPU %s chip %s DDR Capacity(MB): value out of range", npuID, chipID)
 			}
+			totalBytes = gpu.Uint64(uint64(bytes))
 		}
-
-		// VRAM: total from usages DDR Capacity, used computed from DDR Usage Rate
-		var vramTotalBytes int64
-		var vramUsedBytes int64
-		if chipUsages != nil {
-			if capStr, ok := chipUsages["DDR Capacity(MB)"]; ok && capStr != "" {
-				if capMB, err := strconv.ParseFloat(capStr, 64); err == nil {
-					vramTotalBytes = int64(capMB * 1024 * 1024)
-				}
+		usageRate, err := parseHuaweiFloat(chipUsages["DDR Usage Rate(%)"])
+		if err != nil {
+			return nil, globalNum, fmt.Errorf("parse NPU %s chip %s DDR Usage Rate(%%): %w", npuID, chipID, err)
+		}
+		var usedBytes *uint64
+		if totalBytes != nil && usageRate != nil {
+			used := float64(*totalBytes) * *usageRate / 100
+			if *usageRate < 0 || used >= math.Exp2(64) {
+				return nil, globalNum, fmt.Errorf("parse NPU %s chip %s DDR Usage Rate(%%): value out of range", npuID, chipID)
 			}
-			if rateStr, ok := chipUsages["DDR Usage Rate(%)"]; ok && rateStr != "" {
-				if rate, err := strconv.ParseFloat(rateStr, 64); err == nil && vramTotalBytes > 0 {
-					vramUsedBytes = int64(float64(vramTotalBytes) * rate / 100.0)
-				}
-			}
+			usedBytes = gpu.Uint64(uint64(used))
 		}
 
-		// Model
 		model := ""
-		if chipProduct != nil {
-			if v, ok := chipProduct["Product Type"]; ok && v != "" && v != "NA" {
-				model = v
-			}
+		if value := chipProduct["Product Type"]; value != "" && value != "NA" {
+			model = value
 		}
-
 		infos = append(infos, gpu.GPUInfo{
 			Num:                         globalNum,
 			DeviceID:                    chipID,
@@ -182,29 +181,36 @@ func buildGPUInfoList(
 			CardSeries:                  "Ascend",
 			CardModel:                   model,
 			TemperatureEdge:             temp,
-			TemperatureJunction:         temp,
-			TemperatureMemory:           temp,
 			GPUUse:                      gpuUse,
-			VRAMTotalMemory:             fmt.Sprintf("%d", vramTotalBytes),
-			VRAMTotalUsedMemory:         fmt.Sprintf("%d", vramUsedBytes),
-			AverageGraphicsPackagePower: powerVal,
-			SerialNumber:                serialNumber,
-			PCIBus:                      pciBus,
+			VRAMTotalMemory:             totalBytes,
+			VRAMTotalUsedMemory:         usedBytes,
+			AverageGraphicsPackagePower: powerValue,
+			SerialNumber:                board["Serial Number"],
+			PCIBus:                      board["PCIe Bus Info"],
 		})
 		globalNum++
 	}
-
-	return infos, globalNum
+	return infos, globalNum, nil
 }
 
-// extractNPUIDs extracts unique NPU IDs from npu-smi info table output.
-// It distinguishes NPU rows (e.g. "2944    310P3") from Chip rows (e.g. "0       0")
-// by checking whether the second field contains non-digit characters.
+func parseHuaweiFloat(value string) (*float64, error) {
+	if strings.EqualFold(strings.TrimSpace(value), "NA") {
+		return nil, nil
+	}
+	parsed, err := gpu.ParseFloat(value)
+	if err != nil {
+		return nil, err
+	}
+	if parsed != nil && (math.IsNaN(*parsed) || math.IsInf(*parsed, 0)) {
+		return nil, fmt.Errorf("non-finite value %q", value)
+	}
+	return parsed, nil
+}
+
 func extractNPUIDs(output []byte) ([]string, error) {
 	seen := make(map[string]bool)
 	var ids []string
 	scanner := bufio.NewScanner(bytes.NewReader(output))
-
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if !strings.HasPrefix(line, "|") {
@@ -214,30 +220,15 @@ func extractNPUIDs(output []byte) ([]string, error) {
 		if len(parts) < 2 {
 			continue
 		}
-		firstField := strings.TrimSpace(parts[1])
-		if firstField == "" {
+		tokens := strings.Fields(strings.TrimSpace(parts[1]))
+		if len(tokens) < 2 || !isAllDigits(tokens[0]) || isAllDigits(tokens[1]) {
 			continue
 		}
-		tokens := strings.Fields(firstField)
-		if len(tokens) < 2 {
-			continue
-		}
-		// First token must be all digits (NPU ID)
-		if !isAllDigits(tokens[0]) {
-			continue
-		}
-		// Second token must contain at least one non-digit character
-		// (e.g. "310P3", "910B") to distinguish from Chip rows like "0       0"
-		if isAllDigits(tokens[1]) {
-			continue
-		}
-		id := tokens[0]
-		if !seen[id] {
-			seen[id] = true
-			ids = append(ids, id)
+		if !seen[tokens[0]] {
+			seen[tokens[0]] = true
+			ids = append(ids, tokens[0])
 		}
 	}
-
 	return ids, scanner.Err()
 }
 
@@ -250,14 +241,11 @@ func isAllDigits(s string) bool {
 	return len(s) > 0
 }
 
-// parseChipSections parses key:value output grouped by Chip ID.
-// It auto-detects whether Chip ID appears at the start or end of each section.
 func parseChipSections(output []byte) map[string]map[string]string {
 	type kv struct {
 		key   string
 		value string
 	}
-
 	var lines []kv
 	scanner := bufio.NewScanner(bytes.NewReader(output))
 	for scanner.Scan() {
@@ -283,18 +271,15 @@ func parseChipSections(output []byte) map[string]map[string]string {
 			chipIndices = append(chipIndices, i)
 		}
 	}
-
 	if len(chipIndices) == 0 {
 		return nil
 	}
 
 	result := make(map[string]map[string]string)
-	isForward := chipIndices[0] == 0
-
-	if isForward {
+	if chipIndices[0] == 0 {
 		for i, idx := range chipIndices {
 			chipID := lines[idx].value
-			m := make(map[string]string)
+			values := make(map[string]string)
 			end := len(lines)
 			if i+1 < len(chipIndices) {
 				end = chipIndices[i+1]
@@ -303,27 +288,25 @@ func parseChipSections(output []byte) map[string]map[string]string {
 				if lines[j].key == "Chip Name" && strings.EqualFold(lines[j].value, "mcu") {
 					break
 				}
-				m[lines[j].key] = lines[j].value
+				values[lines[j].key] = lines[j].value
 			}
-			result[chipID] = m
+			result[chipID] = values
 		}
 	} else {
 		start := 0
 		for _, idx := range chipIndices {
 			chipID := lines[idx].value
-			m := make(map[string]string)
+			values := make(map[string]string)
 			for j := start; j < idx; j++ {
-				m[lines[j].key] = lines[j].value
+				values[lines[j].key] = lines[j].value
 			}
-			result[chipID] = m
+			result[chipID] = values
 			start = idx + 1
 		}
 	}
-
 	return result
 }
 
-// parseBoardOutput parses board-level key:value output (no Chip ID grouping).
 func parseBoardOutput(output []byte) map[string]string {
 	result := make(map[string]string)
 	scanner := bufio.NewScanner(bytes.NewReader(output))
@@ -337,56 +320,69 @@ func parseBoardOutput(output []byte) map[string]string {
 			continue
 		}
 		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
 		if key == "NPU ID" || key == "Chip Count" {
 			continue
 		}
-		result[key] = value
+		result[key] = strings.TrimSpace(parts[1])
 	}
 	return result
 }
 
-func (h *npuSMICommand) getBoardInfo(npuID string) (map[string]string, error) {
-	cmd := exec.Command(h.smiPath, "info", "-t", "board", "-i", npuID)
+func (h *npuSMICommand) queryInfo(ctx context.Context, smiPath, npuID, infoType string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, smiPath, "info", "-t", infoType, "-i", npuID)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get board info for NPU %s: %v", npuID, err)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, &gpu.OpError{Vendor: h.Vendor(), Op: "get " + infoType + " info for NPU " + npuID, Command: cmd.String(), Err: ctxErr}
+		}
+		if message := strings.TrimSpace(string(output)); message != "" {
+			err = fmt.Errorf("%w: %s", err, message)
+		}
+		opErr := &gpu.OpError{Vendor: h.Vendor(), Op: "get " + infoType + " info for NPU " + npuID, Command: cmd.String(), Err: err}
+		if errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("%w: %w", gpu.ErrUnavailable, opErr)
+		}
+		return nil, opErr
+	}
+	return output, nil
+}
+
+func (h *npuSMICommand) getBoardInfo(ctx context.Context, smiPath, npuID string) (map[string]string, error) {
+	output, err := h.queryInfo(ctx, smiPath, npuID, "board")
+	if err != nil {
+		return nil, err
 	}
 	return parseBoardOutput(output), nil
 }
 
-func (h *npuSMICommand) getCommonInfo(npuID string) (map[string]map[string]string, error) {
-	cmd := exec.Command(h.smiPath, "info", "-t", "common", "-i", npuID)
-	output, err := cmd.CombinedOutput()
+func (h *npuSMICommand) getCommonInfo(ctx context.Context, smiPath, npuID string) (map[string]map[string]string, error) {
+	output, err := h.queryInfo(ctx, smiPath, npuID, "common")
 	if err != nil {
-		return nil, fmt.Errorf("failed to get common info for NPU %s: %v", npuID, err)
+		return nil, err
 	}
 	return parseChipSections(output), nil
 }
 
-func (h *npuSMICommand) getUsagesInfo(npuID string) (map[string]map[string]string, error) {
-	cmd := exec.Command(h.smiPath, "info", "-t", "usages", "-i", npuID)
-	output, err := cmd.CombinedOutput()
+func (h *npuSMICommand) getUsagesInfo(ctx context.Context, smiPath, npuID string) (map[string]map[string]string, error) {
+	output, err := h.queryInfo(ctx, smiPath, npuID, "usages")
 	if err != nil {
-		return nil, fmt.Errorf("failed to get usages info for NPU %s: %v", npuID, err)
+		return nil, err
 	}
 	return parseChipSections(output), nil
 }
 
-func (h *npuSMICommand) getProductInfo(npuID string) (map[string]map[string]string, error) {
-	cmd := exec.Command(h.smiPath, "info", "-t", "product", "-i", npuID)
-	output, err := cmd.CombinedOutput()
+func (h *npuSMICommand) getProductInfo(ctx context.Context, smiPath, npuID string) (map[string]map[string]string, error) {
+	output, err := h.queryInfo(ctx, smiPath, npuID, "product")
 	if err != nil {
-		return nil, fmt.Errorf("failed to get product info for NPU %s: %v", npuID, err)
+		return nil, err
 	}
 	return parseChipSections(output), nil
 }
 
-func (h *npuSMICommand) getPowerInfo(npuID string) (map[string]string, error) {
-	cmd := exec.Command(h.smiPath, "info", "-t", "power", "-i", npuID)
-	output, err := cmd.CombinedOutput()
+func (h *npuSMICommand) getPowerInfo(ctx context.Context, smiPath, npuID string) (map[string]string, error) {
+	output, err := h.queryInfo(ctx, smiPath, npuID, "power")
 	if err != nil {
-		return nil, fmt.Errorf("failed to get power info for NPU %s: %v", npuID, err)
+		return nil, err
 	}
 	return parseBoardOutput(output), nil
 }

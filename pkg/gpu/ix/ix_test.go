@@ -5,123 +5,86 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hawkli-1994/gpu_tools/pkg/gpu"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func envValue(t *testing.T, env []string, key string) string {
 	t.Helper()
 	prefix := key + "="
 	for _, kv := range env {
-		if v, ok := strings.CutPrefix(kv, prefix); ok {
-			return v
+		if value, ok := strings.CutPrefix(kv, prefix); ok {
+			return value
 		}
 	}
 	return ""
 }
 
-func TestIxsmmiEnv(t *testing.T) {
-	// 创建临时目录结构
+func TestIxsmiEnv(t *testing.T) {
 	tmpDir := t.TempDir()
 	binDir := filepath.Join(tmpDir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatalf("failed to create bin dir: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(binDir, 0o755))
 	ixsmiPath := filepath.Join(binDir, "ixsmi")
-	if err := os.WriteFile(ixsmiPath, []byte("#!/bin/bash"), 0755); err != nil {
-		t.Fatalf("failed to create ixsmi: %v", err)
-	}
+	require.NoError(t, os.WriteFile(ixsmiPath, []byte("#!/bin/sh\n"), 0o755))
 
 	env := ixsmiEnv(ixsmiPath)
-
-	// 验证 PATH 前置了 corex bin 目录，且保留原值
 	newPath := envValue(t, env, "PATH")
-	if !strings.HasPrefix(newPath, binDir+":") {
-		t.Errorf("PATH should start with %s, got %s", binDir, newPath)
-	}
-	if !strings.Contains(newPath, os.Getenv("PATH")) {
-		t.Errorf("PATH should preserve old value %s, got %s", os.Getenv("PATH"), newPath)
-	}
-
-	// 验证 LD_LIBRARY_PATH 包含 corex lib 目录，且保留原值
+	assert.True(t, strings.HasPrefix(newPath, binDir+":"))
+	assert.Contains(t, newPath, os.Getenv("PATH"))
 	newLibPath := envValue(t, env, "LD_LIBRARY_PATH")
-	for _, dir := range []string{filepath.Join(tmpDir, "lib"), filepath.Join(tmpDir, "lib64")} {
-		if !strings.Contains(newLibPath, dir) {
-			t.Errorf("LD_LIBRARY_PATH should contain %s, got %s", dir, newLibPath)
-		}
-	}
-	if old := os.Getenv("LD_LIBRARY_PATH"); old != "" && !strings.Contains(newLibPath, old) {
-		t.Errorf("LD_LIBRARY_PATH should preserve old value %s, got %s", old, newLibPath)
+	assert.Contains(t, newLibPath, filepath.Join(tmpDir, "lib"))
+	assert.Contains(t, newLibPath, filepath.Join(tmpDir, "lib64"))
+	if old := os.Getenv("LD_LIBRARY_PATH"); old != "" {
+		assert.Contains(t, newLibPath, old)
 	}
 }
 
-func TestIxsmmiEnvDoesNotMutateGlobalEnv(t *testing.T) {
+func TestIxsmiEnvDoesNotMutateGlobalEnv(t *testing.T) {
 	origPath := os.Getenv("PATH")
 	origLibPath := os.Getenv("LD_LIBRARY_PATH")
-
 	ixsmiEnv("/usr/local/corex-4.4.0/bin/ixsmi")
-
-	if os.Getenv("PATH") != origPath {
-		t.Errorf("global PATH mutated: got %s, want %s", os.Getenv("PATH"), origPath)
-	}
-	if os.Getenv("LD_LIBRARY_PATH") != origLibPath {
-		t.Errorf("global LD_LIBRARY_PATH mutated: got %s, want %s", os.Getenv("LD_LIBRARY_PATH"), origLibPath)
-	}
+	assert.Equal(t, origPath, os.Getenv("PATH"))
+	assert.Equal(t, origLibPath, os.Getenv("LD_LIBRARY_PATH"))
 }
 
 func TestParseIXSMI(t *testing.T) {
-	path := filepath.Join("testdata", "ixsmi.xml")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("failed to read xml: %v", err)
-	}
-	info, err := ParseIXSMI(string(data))
-	if err != nil {
-		t.Fatalf("parseIXSMI error: %v", err)
-	}
-	if len(info.GPUInfos) != 2 {
-		t.Fatalf("expected 2 gpus, got %d", len(info.GPUInfos))
-	}
-	gpu0 := info.GPUInfos[0]
-	if gpu0.DeviceID != "00000000:0C:00.0" {
-		t.Errorf("gpu0.DeviceID = %s", gpu0.DeviceID)
-	}
-	if gpu0.SerialNumber != "23490256585496" {
-		t.Errorf("gpu0.SerialNumber = %s", gpu0.SerialNumber)
-	}
-	if gpu0.VRAMTotalMemory != "34359738368" {
-		t.Errorf("gpu0.VRAMTotalMemory = %s", gpu0.VRAMTotalMemory)
-	}
-	if gpu0.VRAMTotalUsedMemory != "29129441280" {
-		t.Errorf("gpu0.VRAMTotalUsedMemory = %s", gpu0.VRAMTotalUsedMemory)
-	}
-	if gpu0.TemperatureEdge != "44" {
-		t.Errorf("gpu0.TemperatureEdge = %s", gpu0.TemperatureEdge)
-	}
-	if gpu0.GPUUse != "0" {
-		t.Errorf("gpu0.GPUUse = %s", gpu0.GPUUse)
-	}
-	if gpu0.PCIBus != "0000:0C:00.0" {
-		t.Errorf("gpu0.PCIBus = %s", gpu0.PCIBus)
-	}
-	gpu1 := info.GPUInfos[1]
-	if gpu1.DeviceID != "00000000:0F:00.0" {
-		t.Errorf("gpu1.DeviceID = %s", gpu1.DeviceID)
-	}
-	if gpu1.SerialNumber != "23490258505496" {
-		t.Errorf("gpu1.SerialNumber = %s", gpu1.SerialNumber)
-	}
-	if gpu1.VRAMTotalMemory != "34359738368" {
-		t.Errorf("gpu1.VRAMTotalMemory = %s", gpu1.VRAMTotalMemory)
-	}
-	if gpu1.VRAMTotalUsedMemory != "29062332416" {
-		t.Errorf("gpu1.VRAMTotalUsedMemory = %s", gpu1.VRAMTotalUsedMemory)
-	}
-	if gpu1.TemperatureEdge != "44" {
-		t.Errorf("gpu1.TemperatureEdge = %s", gpu1.TemperatureEdge)
-	}
-	if gpu1.GPUUse != "0" {
-		t.Errorf("gpu1.GPUUse = %s", gpu1.GPUUse)
-	}
-	if gpu1.PCIBus != "0000:0F:00.0" {
-		t.Errorf("gpu1.PCIBus = %s", gpu1.PCIBus)
-	}
+	data, err := os.ReadFile(filepath.Join("testdata", "ixsmi.xml"))
+	require.NoError(t, err)
+	infos, err := ParseIXSMI(string(data))
+	require.NoError(t, err)
+	require.Len(t, infos, 2)
+
+	assert.Equal(t, "00000000:0C:00.0", infos[0].DeviceID)
+	assert.Equal(t, "23490256585496", infos[0].SerialNumber)
+	assert.Equal(t, gpu.Uint64(34359738368), infos[0].VRAMTotalMemory)
+	assert.Equal(t, gpu.Uint64(29129441280), infos[0].VRAMTotalUsedMemory)
+	assert.Equal(t, gpu.Float64(44), infos[0].TemperatureEdge)
+	assert.Nil(t, infos[0].TemperatureJunction)
+	assert.Nil(t, infos[0].TemperatureMemory)
+	assert.Equal(t, gpu.Float64(0), infos[0].GPUUse)
+	assert.Equal(t, "0000:0C:00.0", infos[0].PCIBus)
+	assert.Equal(t, "00000000:0F:00.0", infos[1].DeviceID)
+	assert.Equal(t, "23490258505496", infos[1].SerialNumber)
+	assert.Equal(t, gpu.Uint64(34359738368), infos[1].VRAMTotalMemory)
+	assert.Equal(t, gpu.Uint64(29062332416), infos[1].VRAMTotalUsedMemory)
+	assert.Equal(t, gpu.Float64(44), infos[1].TemperatureEdge)
+	assert.Equal(t, gpu.Float64(0), infos[1].GPUUse)
+	assert.Equal(t, "0000:0F:00.0", infos[1].PCIBus)
+}
+
+func TestParseIXSMIMissingNumericValues(t *testing.T) {
+	infos, err := ParseIXSMI(`<ixsmi_log><gpu id="0"><memory_usage><total>N/A</total></memory_usage></gpu></ixsmi_log>`)
+	require.NoError(t, err)
+	require.Len(t, infos, 1)
+	assert.Nil(t, infos[0].VRAMTotalMemory)
+	assert.Nil(t, infos[0].VRAMTotalUsedMemory)
+	assert.Nil(t, infos[0].TemperatureEdge)
+	assert.Nil(t, infos[0].GPUUse)
+}
+
+func TestParseIXSMIInvalidNumericValue(t *testing.T) {
+	_, err := ParseIXSMI(`<ixsmi_log><gpu id="0"><temperature><gpu_temp>invalid C</gpu_temp></temperature></gpu></ixsmi_log>`)
+	assert.Error(t, err)
 }

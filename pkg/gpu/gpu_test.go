@@ -5,9 +5,5 @@ import (
 	"github.com/hawkli-1994/gpu_tools/pkg/gpu/nvidia"
 )
 
-var _ DriverGetter = nvidia.New()
-
-type DriverGetter interface {
-	gpu.GPUInfoLoader
-	DriverInfo() (gpu.GPUDriverInfo, error)
-}
+var _ gpu.Loader = nvidia.New()
+var _ gpu.DriverLoader = nvidia.New()

@@ -1,25 +1,19 @@
 package cpu
 
 import (
+	"context"
+
 	"github.com/hawkli-1994/gpu_tools/pkg/gpu"
 )
 
-func init() {
-	gpu.Register(&cpuSmiCommand{})
+func New() *cpuSmiCommand {
+	return &cpuSmiCommand{}
 }
 
-type cpuSmiCommand struct {
-}
+type cpuSmiCommand struct{}
 
-func (c *cpuSmiCommand) Load() (*gpu.GPUInfoList, error) {
-	list := &gpu.GPUInfoList{
-		GPUInfos: []gpu.GPUInfo{},
-	}
-	return list, nil
-}
-
-func (c *cpuSmiCommand) Available() bool {
-	return true
+func (c *cpuSmiCommand) Load(context.Context) ([]gpu.GPUInfo, error) {
+	return []gpu.GPUInfo{}, nil
 }
 
 func (c *cpuSmiCommand) Vendor() string {

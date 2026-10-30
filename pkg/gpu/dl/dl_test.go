@@ -1,100 +1,111 @@
 package dl
 
 import (
-	"fmt"
+	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/hawkli-1994/gpu_tools/pkg/gpu"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseDLSMIOutput(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("testdata", "dlsmi_output.xml"))
-	if err != nil {
-		t.Fatalf("failed to read fixture: %v", err)
-	}
+	require.NoError(t, err)
+	infos, err := parseDLSMIOutput(data)
+	require.NoError(t, err)
+	require.Len(t, infos, 8)
 
-	infoList, err := parseDLSMIOutput(data)
-	if err != nil {
-		t.Fatalf("parseDLSMIOutput returned error: %v", err)
-	}
+	first := infos[0]
+	assert.Equal(t, 0, first.Num)
+	assert.Equal(t, "0x00061E27", first.DeviceID)
+	assert.Equal(t, "0.3.16", first.DeviceRev)
+	assert.Equal(t, "Goldwasser", first.CardVendor)
+	assert.Equal(t, "KS38 QUAD-3", first.CardModel)
+	assert.Equal(t, "DLIv2", first.CardSeries)
+	assert.Equal(t, "GDF00189C02", first.CardSKU)
+	assert.Equal(t, "00000000:1E:00.0", first.PCIBus)
+	assert.Equal(t, "GDF00189C01DE25300141", first.SerialNumber)
+	assert.Equal(t, gpu.Uint64(32768*1024*1024), first.VRAMTotalMemory)
+	assert.Equal(t, gpu.Uint64(293*1024*1024), first.VRAMTotalUsedMemory)
+	assert.Equal(t, gpu.Float64(0), first.GPUUse)
+	assert.Equal(t, gpu.Float64(6.29), first.AverageGraphicsPackagePower)
+	assert.Equal(t, gpu.Float64(53), first.TemperatureEdge)
+	assert.Nil(t, first.TemperatureJunction)
+	assert.Equal(t, gpu.Float64(53), first.TemperatureMemory)
 
-	if len(infoList.GPUInfos) != 8 {
-		t.Fatalf("expected 8 GPUs, got %d", len(infoList.GPUInfos))
-	}
+	assert.Equal(t, 1, infos[1].Num)
+	assert.Equal(t, "00000000:1F:00.0", infos[1].PCIBus)
+	assert.Equal(t, "KS38 QUAD-2", infos[1].CardModel)
+	assert.Equal(t, 7, infos[7].Num)
+	assert.Equal(t, "00000000:30:00.0", infos[7].PCIBus)
+	assert.Equal(t, "KS38 QUAD-1", infos[7].CardModel)
+}
 
-	first := infoList.GPUInfos[0]
-	if first.Num != 0 {
-		t.Fatalf("expected first GPU num 0, got %d", first.Num)
-	}
-	if first.DeviceID != "0x00061E27" {
-		t.Fatalf("expected device ID 0x00061E27, got %s", first.DeviceID)
-	}
-	if first.DeviceRev != "0.3.16" {
-		t.Fatalf("expected firmware version 0.3.16, got %s", first.DeviceRev)
-	}
-	if first.CardVendor != "Goldwasser" {
-		t.Fatalf("expected vendor Goldwasser, got %s", first.CardVendor)
-	}
-	if first.CardModel != "KS38 QUAD-3" {
-		t.Fatalf("expected card model KS38 QUAD-3, got %s", first.CardModel)
-	}
-	if first.CardSeries != "DLIv2" {
-		t.Fatalf("expected card series DLIv2, got %s", first.CardSeries)
-	}
-	if first.CardSKU != "GDF00189C02" {
-		t.Fatalf("expected SKU GDF00189C02, got %s", first.CardSKU)
-	}
-	if first.PCIBus != "00000000:1E:00.0" {
-		t.Fatalf("expected PCI bus 00000000:1E:00.0, got %s", first.PCIBus)
-	}
-	if first.SerialNumber != "GDF00189C01DE25300141" {
-		t.Fatalf("expected serial number GDF00189C01DE25300141, got %s", first.SerialNumber)
-	}
+func TestParseDLSMIOutputMissingNumericValues(t *testing.T) {
+	infos, err := parseDLSMIOutput([]byte(`<dlsmi_log><gpu id="0"><memory_usage><total>N/A</total><used></used></memory_usage><utilization><gpu>N/A</gpu></utilization></gpu></dlsmi_log>`))
+	require.NoError(t, err)
+	require.Len(t, infos, 1)
+	assert.Nil(t, infos[0].VRAMTotalMemory)
+	assert.Nil(t, infos[0].VRAMTotalUsedMemory)
+	assert.Nil(t, infos[0].GPUUse)
+	assert.Nil(t, infos[0].TemperatureEdge)
+}
 
-	expectedTotal := fmt.Sprintf("%d", 32768*1024*1024)
-	if first.VRAMTotalMemory != expectedTotal {
-		t.Fatalf("expected total memory %s, got %s", expectedTotal, first.VRAMTotalMemory)
-	}
-	expectedUsed := fmt.Sprintf("%d", 293*1024*1024)
-	if first.VRAMTotalUsedMemory != expectedUsed {
-		t.Fatalf("expected used memory %s, got %s", expectedUsed, first.VRAMTotalUsedMemory)
-	}
+func TestParseDLSMIOutputInvalidNumericValue(t *testing.T) {
+	_, err := parseDLSMIOutput([]byte(`<dlsmi_log><gpu id="0"><utilization><gpu>invalid %</gpu></utilization></gpu></dlsmi_log>`))
+	assert.Error(t, err)
+}
 
-	if first.GPUUse != "0" {
-		t.Fatalf("expected GPU utilization 0, got %s", first.GPUUse)
-	}
-	if first.AverageGraphicsPackagePower != "6.29" {
-		t.Fatalf("expected power draw 6.29, got %s", first.AverageGraphicsPackagePower)
-	}
-	if first.TemperatureEdge != "53" {
-		t.Fatalf("expected edge temperature 53, got %s", first.TemperatureEdge)
-	}
-	if first.TemperatureJunction != "106" {
-		t.Fatalf("expected junction temperature 106, got %s", first.TemperatureJunction)
-	}
-	if first.TemperatureMemory != "53" {
-		t.Fatalf("expected memory temperature 53, got %s", first.TemperatureMemory)
-	}
+func TestLoadDoesNotRetryCommandExitFailure(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dlsmi")
+	require.NoError(t, os.WriteFile(path, []byte("#!/bin/sh\necho 'dlsmi exited' >&2\nexit 23\n"), 0o755))
+	t.Setenv("PATH", dir)
 
-	second := infoList.GPUInfos[1]
-	if second.Num != 1 {
-		t.Fatalf("expected second GPU num 1, got %d", second.Num)
-	}
-	if second.PCIBus != "00000000:1F:00.0" {
-		t.Fatalf("expected second PCI bus 00000000:1F:00.0, got %s", second.PCIBus)
-	}
-	if second.CardModel != "KS38 QUAD-2" {
-		t.Fatalf("expected second card model KS38 QUAD-2, got %s", second.CardModel)
-	}
+	_, err := New().Load(context.Background())
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, gpu.ErrUnavailable))
+	var exitErr *exec.ExitError
+	assert.True(t, errors.As(err, &exitErr))
+	assert.Contains(t, err.Error(), "dlsmi exited")
+}
 
-	last := infoList.GPUInfos[7]
-	if last.Num != 7 {
-		t.Fatalf("expected last GPU num 7, got %d", last.Num)
-	}
-	if last.PCIBus != "00000000:30:00.0" {
-		t.Fatalf("expected last PCI bus 00000000:30:00.0, got %s", last.PCIBus)
-	}
-	if last.CardModel != "KS38 QUAD-1" {
-		t.Fatalf("expected last card model KS38 QUAD-1, got %s", last.CardModel)
+func TestLoadCancellationStopsBlockingCommand(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "started")
+	path := filepath.Join(dir, "dlsmi")
+	script := "#!/bin/sh\nprintf started > \"$GPU_TEST_MARKER\"\nexec /bin/sleep 30\n"
+	require.NoError(t, os.WriteFile(path, []byte(script), 0o755))
+	t.Setenv("PATH", dir)
+	t.Setenv("GPU_TEST_MARKER", marker)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := New().Load(ctx)
+		done <- err
+	}()
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(marker)
+		return err == nil
+	}, 2*time.Second, 10*time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		require.Error(t, err)
+		assert.ErrorIs(t, err, context.Canceled)
+		var opErr *gpu.OpError
+		require.ErrorAs(t, err, &opErr)
+		assert.Equal(t, context.Canceled, opErr.Err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("Load did not return after cancellation")
 	}
 }

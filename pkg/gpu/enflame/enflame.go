@@ -3,99 +3,75 @@ package enflame
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
-
-	// "os"
+	"math"
+	"os"
 	"os/exec"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/hawkli-1994/gpu_tools/pkg/gpu"
 )
 
-func init() {
-	gpu.Register(&enflameSMICommand{})
+func New() *enflameSMICommand {
+	return &enflameSMICommand{}
 }
 
-type enflameSMICommand struct {
-}
+type enflameSMICommand struct{}
 
-func (e *enflameSMICommand) Load() (*gpu.GPUInfoList, error) {
-	// 执行efsmi命令获取GPU信息
-
-	cmd := exec.Command("efsmi", "-q", "-d", "TEMP,MEMORY,USAGE,PCIE")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-
-		cmd = exec.Command("/usr/bin/efsmi", "-q", "-d", "TEMP,MEMORY,USAGE,PCIE")
-		output, err = cmd.CombinedOutput()
-		if err != nil {
-			return nil, fmt.Errorf("failed to execute efsmi command: %v", err)
-		} else {
+func (e *enflameSMICommand) Load(ctx context.Context) ([]gpu.GPUInfo, error) {
+	candidates := []string{"efsmi", "/usr/bin/efsmi"}
+	var lastErr error
+	for _, path := range candidates {
+		args := []string{"-q", "-d", "TEMP,MEMORY,USAGE,PCIE"}
+		cmd := exec.CommandContext(ctx, path, args...)
+		output, err := cmd.CombinedOutput()
+		if err == nil {
 			return e.parse(output)
 		}
+		command := strings.Join(append([]string{path}, args...), " ")
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, &gpu.OpError{Vendor: e.Vendor(), Op: "query", Command: command, Err: ctxErr}
+		}
+		if message := strings.TrimSpace(string(output)); message != "" {
+			err = fmt.Errorf("%w: %s", err, message)
+		}
+		lastErr = &gpu.OpError{Vendor: e.Vendor(), Op: "query", Command: command, Err: err}
+		if !errors.Is(err, exec.ErrNotFound) && !errors.Is(err, os.ErrNotExist) {
+			return nil, lastErr
+		}
 	}
-	return e.parse(output)
+	return nil, fmt.Errorf("%w: %w", gpu.ErrUnavailable, lastErr)
 }
 
-func (e *enflameSMICommand) Available() bool {
-	// 检查efsmi命令是否可用
-	_, err := exec.LookPath("efsmi")
-	if err != nil {
-		_, err = exec.LookPath("/usr/bin/efsmi")
-		return err == nil
-	} else {
-		return true
-	}
-}
-
-func (e *enflameSMICommand) parse(output []byte) (*gpu.GPUInfoList, error) {
+func (e *enflameSMICommand) parse(output []byte) ([]gpu.GPUInfo, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(output))
-	scanner.Split(bufio.ScanLines)
+	result := make([]gpu.GPUInfo, 0)
 
-	result := &gpu.GPUInfoList{
-		GPUInfos: []gpu.GPUInfo{},
-	}
-
-	var currentGPU *gpu.GPUInfo
+	var current *gpu.GPUInfo
 	var currentSection string
 	valueRegex := regexp.MustCompile(`:\s+(.+)`)
-	num := 0
 	for scanner.Scan() {
-		line := scanner.Text()
-		line = strings.TrimSpace(line)
-
-		// 检测新的GPU设备
+		line := strings.TrimSpace(scanner.Text())
 		if strings.HasPrefix(line, "DEV ID") {
-			if currentGPU != nil {
-				result.GPUInfos = append(result.GPUInfos, *currentGPU)
+			if current != nil {
+				result = append(result, *current)
 			}
-
-			deviceID := strings.TrimSpace(line[len("DEV ID"):])
-			currentGPU = &gpu.GPUInfo{
-				Num:                 num,
-				DeviceID:            deviceID,
-				CardVendor:          "Enflame",
-				CardModel:           "Enflame GCU",
-				TemperatureMemory:   "0",
-				TemperatureEdge:     "0",
-				TemperatureJunction: "0",
-				VRAMTotalMemory:     "0",
-				VRAMTotalUsedMemory: "0",
-				GPUUse:              "0",
-				PCIBus:              "",
+			current = &gpu.GPUInfo{
+				Num:        len(result),
+				DeviceID:   strings.TrimSpace(line[len("DEV ID"):]),
+				CardVendor: "Enflame",
+				CardModel:  "Enflame GCU",
 			}
 			currentSection = ""
-			num++
+			continue
+		}
+		if current == nil {
 			continue
 		}
 
-		if currentGPU == nil {
-			continue
-		}
-
-		// 检测 section 切换
 		switch {
 		case strings.HasPrefix(line, "PCIe Info"):
 			currentSection = "pcie"
@@ -125,63 +101,83 @@ func (e *enflameSMICommand) parse(output []byte) (*gpu.GPUInfoList, error) {
 			continue
 		}
 		value := matches[1]
-
+		var err error
 		switch currentSection {
 		case "device_mem":
 			switch {
 			case strings.Contains(line, "Mem Size") || strings.Contains(line, "Total Size"):
-				parts := strings.Split(value, " ")
-				if len(parts) >= 2 && parts[1] == "MiB" {
-					if size, err := strconv.ParseFloat(parts[0], 64); err == nil {
-						size = size * 1024 * 1024
-						currentGPU.VRAMTotalMemory = fmt.Sprintf("%.0f", size)
-					}
-				}
+				current.VRAMTotalMemory, err = parseMiB(value)
 			case strings.Contains(line, "Mem Usage") || strings.Contains(line, "Used Size"):
-				parts := strings.Split(value, " ")
-				if len(parts) >= 2 && parts[1] == "MiB" {
-					if size, err := strconv.ParseFloat(parts[0], 64); err == nil {
-						size = size * 1024 * 1024
-						currentGPU.VRAMTotalUsedMemory = fmt.Sprintf("%.0f", size)
-					}
-				}
+				current.VRAMTotalUsedMemory, err = parseMiB(value)
 			}
 		case "temperature":
 			if strings.Contains(line, "GCU Temp") {
-				parts := strings.Split(value, " ")
-				if len(parts) >= 1 {
-					currentGPU.TemperatureMemory = parts[0]
-					currentGPU.TemperatureEdge = parts[0]
-					currentGPU.TemperatureJunction = parts[0]
-				}
+				current.TemperatureEdge, err = parseEnflameFloat(value)
 			}
 		case "usage":
 			if strings.Contains(line, "GCU Usage") {
-				parts := strings.Split(value, " ")
-				if len(parts) >= 1 {
-					currentGPU.GPUUse = parts[0]
-				}
+				current.GPUUse, err = parseEnflameFloat(value)
 			}
 		case "pcie":
 			switch {
 			case strings.Contains(line, "Domain"):
-				currentGPU.PCIBus = strings.TrimSpace(value)
+				current.PCIBus = strings.TrimSpace(value)
 			case strings.Contains(line, "Bus"):
-				currentGPU.PCIBus = fmt.Sprintf("%s:%s", currentGPU.PCIBus, strings.TrimSpace(value))
+				current.PCIBus = fmt.Sprintf("%s:%s", current.PCIBus, strings.TrimSpace(value))
 			case strings.Contains(line, "Dev  "):
-				currentGPU.PCIBus = fmt.Sprintf("%s:%s", currentGPU.PCIBus, strings.TrimSpace(value))
+				current.PCIBus = fmt.Sprintf("%s:%s", current.PCIBus, strings.TrimSpace(value))
 			case strings.Contains(line, "Func"):
-				currentGPU.PCIBus = fmt.Sprintf("%s.%s", currentGPU.PCIBus, strings.TrimSpace(value))
+				current.PCIBus = fmt.Sprintf("%s.%s", current.PCIBus, strings.TrimSpace(value))
 			}
 		}
+		if err != nil {
+			return nil, fmt.Errorf("parse efsmi gpu %d field %q: %w", current.Num, line, err)
+		}
 	}
-
-	// 添加最后一个处理的GPU
-	if currentGPU != nil {
-		result.GPUInfos = append(result.GPUInfos, *currentGPU)
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan efsmi output: %w", err)
 	}
-
+	if current != nil {
+		result = append(result, *current)
+	}
 	return result, nil
+}
+
+func parseEnflameFloat(value string) (*float64, error) {
+	fields := strings.Fields(value)
+	if len(fields) == 0 {
+		return nil, nil
+	}
+	parsed, err := gpu.ParseFloat(fields[0])
+	if err != nil {
+		return nil, err
+	}
+	if parsed != nil && (math.IsNaN(*parsed) || math.IsInf(*parsed, 0)) {
+		return nil, fmt.Errorf("non-finite value %q", value)
+	}
+	return parsed, nil
+}
+
+func parseMiB(value string) (*uint64, error) {
+	fields := strings.Fields(value)
+	if len(fields) == 0 || strings.EqualFold(strings.TrimSpace(value), "N/A") {
+		return nil, nil
+	}
+	if len(fields) < 2 || fields[1] != "MiB" {
+		return nil, fmt.Errorf("invalid MiB value %q", value)
+	}
+	size, err := gpu.ParseFloat(fields[0])
+	if err != nil {
+		return nil, err
+	}
+	if size == nil {
+		return nil, nil
+	}
+	bytes := *size * 1024 * 1024
+	if math.IsNaN(bytes) || math.IsInf(bytes, 0) || bytes < 0 || bytes >= math.Exp2(64) {
+		return nil, fmt.Errorf("invalid memory size %q", value)
+	}
+	return gpu.Uint64(uint64(bytes + 0.5)), nil
 }
 
 func (e *enflameSMICommand) Vendor() string {

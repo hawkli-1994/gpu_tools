@@ -1,50 +1,85 @@
 package gpu
 
+import (
+	"context"
+	"fmt"
+	"math"
+	"strconv"
+	"strings"
+)
+
 type GPUInfo struct {
-	Num                         int    `json:"num"`
-	DeviceID                    string `json:"Device ID"`
-	DeviceRev                   string `json:"Device Rev"`
-	TemperatureEdge             string `json:"Temperature (Sensor edge) (C)"`
-	TemperatureJunction         string `json:"Temperature (Sensor junction) (C)"`
-	TemperatureMemory           string `json:"Temperature (Sensor memory) (C)"` // 温度
-	AverageGraphicsPackagePower string `json:"Average Graphics Package Power (W)"`
-	GPUUse                      string `json:"GPU use (%)"` // 利用率
-	SerialNumber                string `json:"Serial Number"`
-	VRAMTotalMemory             string `json:"VRAM Total Memory (B)"`      // 显存总量
-	VRAMTotalUsedMemory         string `json:"VRAM Total Used Memory (B)"` // 显存使用量
-	CardSeries                  string `json:"Card series"`
-	CardModel                   string `json:"Card model"`
-	CardVendor                  string `json:"Card vendor"`
-	CardSKU                     string `json:"Card SKU"`
-	PCIBus                      string `json:"PCI Bus"`
+	Num                         int      `json:"num"`
+	DeviceID                    string   `json:"device_id"`
+	DeviceRev                   string   `json:"device_rev"`
+	TemperatureEdge             *float64 `json:"temperature_edge_c,omitempty"`
+	TemperatureJunction         *float64 `json:"temperature_junction_c,omitempty"`
+	TemperatureMemory           *float64 `json:"temperature_memory_c,omitempty"`
+	AverageGraphicsPackagePower *float64 `json:"average_graphics_package_power_w,omitempty"`
+	GPUUse                      *float64 `json:"gpu_use_percent,omitempty"`
+	SerialNumber                string   `json:"serial_number"`
+	VRAMTotalMemory             *uint64  `json:"vram_total_bytes,omitempty"`
+	VRAMTotalUsedMemory         *uint64  `json:"vram_used_bytes,omitempty"`
+	CardSeries                  string   `json:"card_series"`
+	CardModel                   string   `json:"card_model"`
+	CardVendor                  string   `json:"card_vendor"`
+	CardSKU                     string   `json:"card_sku"`
+	PCIBus                      string   `json:"pci_bus"`
 }
 
-type GPUInfoList struct {
-	GPUInfos []GPUInfo
-}
-
-// DriverInfo stores information about a GPU driver installed on a Linux system.
 type GPUDriverInfo struct {
-	Vendor        string `json:"vendor"`         // GPU vendor (e.g., NVIDIA, AMD, Intel)
-	Version       string `json:"version"`        // Driver version (e.g., "535.113.01")
-	Installed     bool   `json:"installed"`      // Whether the driver is installed
-	InstallPath   string `json:"install_path"`   // Path to driver installation (empty if not installed)
-	ClientVersion string `json:"client_version"` // Version of the client utility (e.g., nvidia-smi version)
-	LibVersion    string `json:"lib_version"`    // Version of the driver library (e.g., CUDA library version)
-	DriverDate    string `json:"driver_date"`    // Release date of the driver (e.g., "2025-01-20")
-	KernelModule  string `json:"kernel_module"`  // Loaded kernel module (e.g., "nvidia")
-	ModuleLoaded  bool   `json:"module_loaded"`  // Whether the kernel module is loaded
-	DriverType    string `json:"driver_type"`    // Type of driver (e.g., "proprietary", "open-source")
-	// Architecture   string   `json:"architecture"`    // System architecture (e.g., "x86_64")
-	// LastError      string   `json:"last_error"`      // Error during data collection, if any
-	// CudaVersion    string   `json:"cuda_version"`    // CUDA version supported (e.g., "12.2")
-	// OpenGLVersion  string   `json:"opengl_version"`  // OpenGL version supported (e.g., "4.6")
-	// Status         string   `json:"status"`          // Driver status (e.g., "active", "inactive")
-	// SupportedGPUs  []string `json:"supported_gpus"`  // List of supported GPU models
+	Vendor        string `json:"vendor"`
+	Version       string `json:"version"`
+	Installed     bool   `json:"installed"`
+	InstallPath   string `json:"install_path"`
+	ClientVersion string `json:"client_version"`
+	LibVersion    string `json:"lib_version"`
+	DriverDate    string `json:"driver_date"`
+	KernelModule  string `json:"kernel_module"`
+	ModuleLoaded  bool   `json:"module_loaded"`
+	DriverType    string `json:"driver_type"`
 }
 
-type GPUInfoLoader interface {
-	Load() (*GPUInfoList, error)
-	Available() bool
+type Loader interface {
+	Load(context.Context) ([]GPUInfo, error)
 	Vendor() string
+}
+
+type DriverLoader interface {
+	DriverInfo(context.Context) (GPUDriverInfo, error)
+}
+
+func Float64(value float64) *float64 {
+	return &value
+}
+
+func Uint64(value uint64) *uint64 {
+	return &value
+}
+
+func ParseFloat(value string) (*float64, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.EqualFold(value, "N/A") {
+		return nil, nil
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return nil, err
+	}
+	if math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+		return nil, fmt.Errorf("non-finite value %q", value)
+	}
+	return &parsed, nil
+}
+
+func ParseUint(value string) (*uint64, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.EqualFold(value, "N/A") {
+		return nil, nil
+	}
+	parsed, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
 }

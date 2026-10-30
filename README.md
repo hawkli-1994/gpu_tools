@@ -1,191 +1,257 @@
 # GPU Tools
 
-A comprehensive Go library for monitoring and managing GPU information across multiple vendors including NVIDIA, AMD, Enflame, and other accelerators.
+GPU Tools is a Go library for collecting GPU and accelerator information through a single, context-aware API. It supports device identity, temperature, utilization, power, memory, and PCI bus information across multiple vendors.
 
 ## Features
 
-- **Multi-vendor Support**: Unified interface for different GPU manufacturers
-  - NVIDIA GPUs (via nvidia-smi)
-  - AMD GPUs (via rocm-smi) 
-  - Enflame GCU (via efsmi)
-  - Intel GPUs (via ix)
-  - CPU information
-  - AMD RISC-V accelerators
+- One `Loader` interface for all supported vendors.
+- Context cancellation and deadlines for every external command.
+- Typed metrics with explicit units and unknown-value handling.
+- A concurrency-safe, explicitly constructed registry with no global state.
+- Structured errors that preserve command, vendor, and operation context.
+- Offline fixture-based parser tests.
 
-- **Comprehensive GPU Information**:
-  - Device identification (ID, model, vendor, serial number)
-  - Performance metrics (temperature, usage, power consumption)
-  - Memory information (total VRAM, used memory)
-  - PCI bus information
+## Requirements
 
-- **Plugin Architecture**: Extensible design allowing easy addition of new GPU vendors
+- Go 1.25 or newer.
+- The vendor SMI tool and driver required by each loader. Parser tests do not require GPU hardware.
 
 ## Installation
 
 ```bash
-go get github.com/hawkli-1994/gpu_tools
+go get github.com/hawkli-1994/gpu_tools/pkg/gpu/all
 ```
 
-## Quick Start
+Import `pkg/gpu/all` when you want every loader, or import an individual vendor package to keep dependencies and initialization explicit.
+
+## Quick start
 
 ```go
 package main
 
 import (
+    "context"
+    "errors"
     "fmt"
     "log"
-    
+    "time"
+
     "github.com/hawkli-1994/gpu_tools/pkg/gpu"
+    "github.com/hawkli-1994/gpu_tools/pkg/gpu/all"
 )
 
 func main() {
-    // Get all available GPU loaders
-    loaders := gpu.GetAllGPULoaders()
-    
-    for _, loader := range loaders {
-        if loader.Available() {
-            fmt.Printf("Found %s GPU loader\n", loader.Vendor())
-            
-            // Load GPU information
-            info, err := loader.Load()
-            if err != nil {
-                log.Printf("Error loading %s GPU info: %v", loader.Vendor(), err)
-                continue
+    registry, err := all.NewRegistry()
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    for _, loader := range registry.Loaders() {
+        ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+        devices, err := loader.Load(ctx)
+        cancel()
+
+        if errors.Is(err, gpu.ErrUnavailable) {
+            continue
+        }
+        if err != nil {
+            log.Printf("load %s GPUs: %v", loader.Vendor(), err)
+            continue
+        }
+
+        for _, device := range devices {
+            fmt.Printf("%s GPU %d: %s\n", loader.Vendor(), device.Num, device.CardModel)
+            if device.GPUUse != nil {
+                fmt.Printf("  utilization: %.1f%%\n", *device.GPUUse)
             }
-            
-            // Print GPU information
-            for _, gpuInfo := range info.GPUInfos {
-                fmt.Printf("GPU %d: %s %s\n", gpuInfo.Num, gpuInfo.CardVendor, gpuInfo.CardModel)
-                fmt.Printf("  Temperature: %s°C\n", gpuInfo.TemperatureEdge)
-                fmt.Printf("  GPU Usage: %s%%\n", gpuInfo.GPUUse)
-                fmt.Printf("  Memory: %s/%s MB\n", 
-                    formatBytes(gpuInfo.VRAMTotalUsedMemory),
-                    formatBytes(gpuInfo.VRAMTotalMemory))
+            if device.VRAMTotalUsedMemory != nil && device.VRAMTotalMemory != nil {
+                fmt.Printf(
+                    "  memory: %d/%d bytes\n",
+                    *device.VRAMTotalUsedMemory,
+                    *device.VRAMTotalMemory,
+                )
             }
         }
     }
 }
-
-func formatBytes(bytesStr string) string {
-    // Convert bytes to MB for display
-    bytes, _ := strconv.ParseInt(bytesStr, 10, 64)
-    return fmt.Sprintf("%.0f", float64(bytes)/(1024*1024))
-}
 ```
 
-## Supported Vendors
+`Loaders` returns loaders sorted by vendor. A separate timeout per loader prevents one slow vendor from consuming the timeout budget of all subsequent loaders.
 
-### NVIDIA
-- **Command**: `nvidia-smi`
-- **Features**: GPU index, name, memory usage, utilization, temperature, PCI bus ID
-- **Requirements**: NVIDIA drivers with nvidia-smi utility
-
-### AMD
-- **Command**: `rocm-smi`
-- **Features**: Comprehensive GPU information including temperature sensors, power consumption, serial numbers
-- **Requirements**: ROCm installation with rocm-smi utility
-
-### Enflame
-- **Command**: `efsmi`
-- **Features**: GCU temperature, memory usage, utilization metrics
-- **Requirements**: Enflame SMI utility installation
-
-### Intel
-- **Command**: Intel GPU utilities
-- **Features**: Intel GPU monitoring capabilities
-
-### CPU
-- **Features**: CPU information and monitoring
-
-## Architecture
-
-The library uses a plugin-based architecture with the following components:
-
-### Core Types
-- `GPUInfo`: Struct containing comprehensive GPU information
-- `GPUInfoList`: Collection of GPUInfo objects
-- `GPUInfoLoader`: Interface for implementing GPU vendor plugins
-
-### Plugin System
-- `registry.go`: Central registry for GPU loaders
-- Automatic registration via `init()` functions in each vendor package
-- Dynamic discovery of available GPU hardware
-
-## Data Structure
+## Use one vendor
 
 ```go
-type GPUInfo struct {
-    Num                         int    `json:"num"`                    // GPU index
-    DeviceID                    string `json:"Device ID"`              // Device identifier
-    DeviceRev                   string `json:"Device Rev"`             // Device revision
-    TemperatureEdge             string `json:"Temperature (Sensor edge) (C)"`
-    TemperatureJunction         string `json:"Temperature (Sensor junction) (C)"`
-    TemperatureMemory           string `json:"Temperature (Sensor memory) (C)"`
-    AverageGraphicsPackagePower string `json:"Average Graphics Package Power (W)"`
-    GPUUse                      string `json:"GPU use (%)"`             // GPU utilization
-    SerialNumber                string `json:"Serial Number"`          // GPU serial number
-    VRAMTotalMemory             string `json:"VRAM Total Memory (B)"`  // Total VRAM in bytes
-    VRAMTotalUsedMemory         string `json:"VRAM Total Used Memory (B)"` // Used VRAM in bytes
-    CardSeries                  string `json:"Card series"`            // GPU series
-    CardModel                   string `json:"Card model"`             // GPU model name
-    CardVendor                  string `json:"Card vendor"`             // GPU vendor
-    CardSKU                     string `json:"Card SKU"`               // GPU SKU
-    PCIBus                      string `json:"PCI Bus"`                // PCI bus identifier
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    "github.com/hawkli-1994/gpu_tools/pkg/gpu/nvidia"
+)
+
+func main() {
+    loader := nvidia.New()
+    devices, err := loader.Load(context.Background())
+    if err != nil {
+        log.Fatal(err)
+    }
+    for _, device := range devices {
+        fmt.Printf("GPU %d: %s\n", device.Num, device.CardModel)
+    }
 }
 ```
 
-## Testing
+AMD prefers `amd-smi` and falls back to `rocm-smi` only when `amd-smi` is unavailable. Execution and parsing failures are returned rather than hidden by the fallback.
 
-Run the test suite:
+## Registry
 
-```bash
-go test ./...
+Create a registry containing only the loaders your application needs:
+
+```go
+registry, err := gpu.NewRegistry(amd.New(), nvidia.New())
+if err != nil {
+    // Handle duplicate or invalid loaders.
+}
+
+loader, ok := registry.Lookup("NVIDIA")
+loaders := registry.Loaders()
 ```
 
-The library includes comprehensive tests for each vendor implementation with sample data files in the `testdata/` directories.
+The registry API is:
 
-## Adding New Vendors
+```go
+func NewRegistry(loaders ...Loader) (*Registry, error)
+func (r *Registry) Register(loader Loader) error
+func (r *Registry) Lookup(vendor string) (Loader, bool)
+func (r *Registry) Loaders() []Loader
+```
 
-To add support for a new GPU vendor:
+Registration rejects nil loaders, empty vendor names, and duplicate vendors. `Loaders` returns a sorted snapshot, so callers cannot mutate the registry's internal map. The zero value of `Registry` is ready for use.
 
-1. Create a new package under `pkg/gpu/`
-2. Implement the `GPUInfoLoader` interface:
-   ```go
-   type VendorLoader struct {}
-   
-   func (v *VendorLoader) Load() (*gpu.GPUInfoList, error)
-   func (v *VendorLoader) Available() bool
-   func (v *VendorLoader) Vendor() string
-   ```
-3. Register the loader in `init()`:
-   ```go
-   func init() {
-       gpu.Register(&VendorLoader{})
-   }
-   ```
+There is no package-global registry and no `init()` self-registration. `all.NewRegistry()` is simply an explicit constructor for the complete set.
 
-## Dependencies
+## Core interface and data model
 
-- Go 1.25.0 or higher
-- [github.com/hawkli-1994/go-radeontop](https://github.com/hawkli-1994/go-radeontop) - AMD GPU monitoring
-- [github.com/stretchr/testify](https://github.com/stretchr/testify) - Testing utilities
+```go
+type Loader interface {
+    Load(context.Context) ([]GPUInfo, error)
+    Vendor() string
+}
+```
+
+`GPUInfo` contains the following fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `Num` | `int` | GPU index reported by the vendor |
+| `DeviceID` | `string` | Device identifier |
+| `DeviceRev` | `string` | Device revision |
+| `SerialNumber` | `string` | Device serial number |
+| `CardSeries` | `string` | Product series |
+| `CardModel` | `string` | Product model |
+| `CardVendor` | `string` | Device vendor |
+| `CardSKU` | `string` | Product SKU |
+| `PCIBus` | `string` | PCI bus/device/function address |
+| `TemperatureEdge` | `*float64` | Edge temperature in Celsius |
+| `TemperatureJunction` | `*float64` | Junction or hotspot temperature in Celsius |
+| `TemperatureMemory` | `*float64` | Memory temperature in Celsius |
+| `AverageGraphicsPackagePower` | `*float64` | Graphics package power in watts |
+| `GPUUse` | `*float64` | GPU utilization in percent |
+| `VRAMTotalMemory` | `*uint64` | Total VRAM in bytes |
+| `VRAMTotalUsedMemory` | `*uint64` | Used VRAM in bytes |
+
+For every pointer metric:
+
+- `nil` means unknown, unsupported, or not supplied by the vendor tool.
+- A non-nil pointer to zero means the measured value is actually zero.
+- A generic temperature is reported only in the most appropriate field; it is not copied into unrelated sensor fields.
+- Non-finite floating-point values and malformed numeric input are rejected.
+
+JSON uses stable `snake_case` names such as `temperature_edge_c`, `gpu_use_percent`, and `vram_total_bytes`. Unknown metrics are omitted with `omitempty`.
+
+## Errors and cancellation
+
+Use `errors.Is` to distinguish an unavailable loader from a real collection failure:
+
+```go
+devices, err := loader.Load(ctx)
+switch {
+case errors.Is(err, gpu.ErrUnavailable):
+    // The tool is missing or the platform is unsupported.
+case errors.Is(err, context.DeadlineExceeded):
+    // The vendor command exceeded the caller's deadline.
+case err != nil:
+    // Command execution or output parsing failed.
+}
+```
+
+For command and operation details, inspect `gpu.OpError`:
+
+```go
+var opErr *gpu.OpError
+if errors.As(err, &opErr) {
+    fmt.Printf("vendor=%s op=%s command=%s\n", opErr.Vendor, opErr.Op, opErr.Command)
+}
+```
+
+`OpError.Unwrap` preserves the underlying error. Loaders do not turn arbitrary driver, permission, or parsing failures into `ErrUnavailable`.
+
+## NVIDIA driver information
+
+NVIDIA also implements the optional `DriverLoader` interface:
+
+```go
+loader := nvidia.New()
+info, err := loader.DriverInfo(ctx)
+```
+
+The returned `GPUDriverInfo` includes the NVIDIA SMI path and the client, driver, and CUDA versions reported by `nvidia-smi --version`.
+
+## Supported vendors
+
+| Vendor | Loader package | Backend |
+| --- | --- | --- |
+| NVIDIA | `pkg/gpu/nvidia` | `nvidia-smi` |
+| AMD | `pkg/gpu/amd` | `amd-smi`, then `rocm-smi` if unavailable |
+| AMD RISC-V | `pkg/gpu/amd_riscv` | AMD RISC-V monitor library and sysfs |
+| CPU | `pkg/gpu/cpu` | Placeholder loader returning no GPU devices |
+| Denglin | `pkg/gpu/dl` | `dlsmi` |
+| Enflame | `pkg/gpu/enflame` | `efsmi` |
+| HoumoAI | `pkg/gpu/houmoai` | `hm_smi` |
+| Huawei | `pkg/gpu/huawei` | `npu-smi` |
+| Iluvatar | `pkg/gpu/ix` | CoreX `ixsmi` |
+| MetaX | `pkg/gpu/mx` | `mx-smi` |
+| XDX | `pkg/gpu/xdx` | `xdxsmi` |
+
+Not every backend exposes every metric. Missing capabilities are represented by `nil`, not fabricated zero values.
+
+## Development
+
+Run the complete validation suite before submitting changes:
+
+```bash
+gofmt -w pkg
+go test ./...
+go test -race ./...
+go build ./...
+go vet ./...
+```
+
+Vendor parser tests use offline fixtures in co-located `testdata` directories, so the standard test suite does not require GPU hardware.
+
+### Add a vendor
+
+1. Create `pkg/gpu/<vendor>` and provide `New()` returning a loader.
+2. Implement `Load(context.Context) ([]gpu.GPUInfo, error)` and `Vendor() string`.
+3. Use `exec.CommandContext` for external commands and preserve errors with `%w` or `gpu.OpError`.
+4. Convert values to the units in `GPUInfo`; use `nil` for unknown metrics.
+5. Add offline fixtures and tests for parsing, invalid input, and missing values.
+6. Add the constructor to `pkg/gpu/all/all.go` and update `pkg/gpu/all/all_test.go`.
+
+Do not add package-level registration or mutable global loader state.
 
 ## License
 
-This project is open source and available under the [MIT License](LICENSE).
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit pull requests or open issues for:
-- New GPU vendor support
-- Bug fixes
-- Performance improvements
-- Documentation updates
-
-## Author
-
-Created by [hawkli-1994](https://github.com/hawkli-1994)
-
-## Support
-
-For issues, questions, or contributions, please open an issue on the [GitHub repository](https://github.com/hawkli-1994/gpu_tools/issues).
+GPU Tools is available under the [MIT License](LICENSE).
