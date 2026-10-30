@@ -49,10 +49,8 @@ func (a *amdRISCVGPU) Load(ctx context.Context) ([]gpu.GPUInfo, error) {
 			TemperatureJunction: gpu.Float64(device.Stats.GpuTempJunction),
 			TemperatureMemory:   gpu.Float64(device.Stats.GpuTempMem),
 			GPUUse:              gpu.Float64(device.Stats.GPUUsage),
-			SerialNumber:        device.DeviceID,
 			VRAMTotalMemory:     gpu.Uint64(device.Stats.VRAMTotal),
 			VRAMTotalUsedMemory: gpu.Uint64(device.Stats.VRAMUsed),
-			CardSeries:          device.DeviceID,
 		})
 	}
 	return infos, nil

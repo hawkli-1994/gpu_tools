@@ -41,6 +41,21 @@ type smiValue struct {
 	Unit  string          `json:"unit"`
 }
 
+func (v *smiValue) UnmarshalJSON(output []byte) error {
+	if !strings.HasPrefix(strings.TrimSpace(string(output)), "{") {
+		v.Value = append(v.Value[:0], output...)
+		v.Unit = ""
+		return nil
+	}
+	type plain smiValue
+	var decoded plain
+	if err := json.Unmarshal(output, &decoded); err != nil {
+		return err
+	}
+	*v = smiValue(decoded)
+	return nil
+}
+
 type smiStaticGPU struct {
 	GPU  int `json:"gpu"`
 	ASIC struct {
@@ -103,7 +118,8 @@ type smiUsage struct {
 }
 
 type smiPower struct {
-	SocketPower smiValue `json:"socket_power"`
+	SocketPower  smiValue `json:"socket_power"`
+	CurrentPower smiValue `json:"current_power"`
 }
 
 type smiTemperature struct {
@@ -191,6 +207,11 @@ func (a *amdSMICommand) parse(staticOutput, metricOutput []byte) ([]gpu.GPUInfo,
 		if info.AverageGraphicsPackagePower, err = data.Power.Value.SocketPower.float(); err != nil {
 			return nil, fmt.Errorf("parse amd-smi GPU %d power: %w", data.GPU, err)
 		}
+		if info.AverageGraphicsPackagePower == nil {
+			if info.AverageGraphicsPackagePower, err = data.Power.Value.CurrentPower.float(); err != nil {
+				return nil, fmt.Errorf("parse amd-smi GPU %d current power: %w", data.GPU, err)
+			}
+		}
 		if info.GPUUse, err = data.Usage.Value.GFXActivity.float(); err != nil {
 			return nil, fmt.Errorf("parse amd-smi GPU %d utilization: %w", data.GPU, err)
 		}
@@ -246,7 +267,7 @@ func (v smiValue) bytes() (*uint64, error) {
 	case "B":
 	case "KB", "KIB":
 		multiplier = 1024
-	case "MB", "MIB":
+	case "", "MB", "MIB":
 		multiplier = 1024 * 1024
 	case "GB", "GIB":
 		multiplier = 1024 * 1024 * 1024

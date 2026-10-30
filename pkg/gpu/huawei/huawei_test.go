@@ -37,6 +37,23 @@ func TestExtractNPUIDs(t *testing.T) {
 	}
 }
 
+func TestExtractMemoryUsage(t *testing.T) {
+	output, err := testdataFS.ReadFile("testdata/npu_info.txt")
+	require.NoError(t, err)
+	usage := extractMemoryUsage(output)
+	assert.Equal(t, map[string]map[string]string{
+		"2944": {"0": "1255", "1": "1472"},
+	}, usage)
+
+	compact := []byte(`| 5       910B                  | OK              | 50           60                0     / 0             |
+| 0                             | 0000:01:00.0    | 0            12294/ 15039       0 / 32768             |
+| NPU     Chip                  | Process id      | Process name             | Process memory(MB)        |
+| 2       0                     | 36315           | foo / bar                | 686                       |`)
+	assert.Equal(t, map[string]map[string]string{
+		"5": {"0": "12294"},
+	}, extractMemoryUsage(compact))
+}
+
 func TestParseChipSectionsForward(t *testing.T) {
 	t.Run("single_chip", func(t *testing.T) {
 		input := `NPU ID                         : 2944
@@ -230,7 +247,7 @@ func TestBuildGPUInfoList(t *testing.T) {
 	assert.Equal(t, gpu.Float64(10), infos[0].GPUUse)
 	assert.Equal(t, "SN12345", infos[0].SerialNumber)
 	assert.Equal(t, "0000:0C:00.0", infos[0].PCIBus)
-	assert.Equal(t, gpu.Float64(43), infos[0].AverageGraphicsPackagePower)
+	assert.Nil(t, infos[0].AverageGraphicsPackagePower)
 	assert.Equal(t, gpu.Uint64(46428848128), infos[0].VRAMTotalMemory)
 	assert.Equal(t, gpu.Uint64(928576962), infos[0].VRAMTotalUsedMemory)
 	assert.Equal(t, 1, infos[1].Num)
@@ -325,6 +342,10 @@ cat "$NPU_FIXTURE_DIR/$file"
 	assert.Equal(t, "0", infos[0].DeviceID)
 	assert.Equal(t, "1", infos[1].DeviceID)
 	assert.Equal(t, "0000:0C:00.0", infos[0].PCIBus)
+	assert.Nil(t, infos[0].AverageGraphicsPackagePower)
+	assert.Nil(t, infos[1].AverageGraphicsPackagePower)
+	assert.Equal(t, gpu.Uint64(1315962880), infos[0].VRAMTotalUsedMemory)
+	assert.Equal(t, gpu.Uint64(1543503872), infos[1].VRAMTotalUsedMemory)
 }
 
 func TestLoadReturnsSubcommandError(t *testing.T) {
@@ -370,7 +391,7 @@ func TestIntegrationDualChipFromFixtures(t *testing.T) {
 	assert.Equal(t, gpu.Float64(0), infos[0].GPUUse)
 	assert.Equal(t, "2106030737ZERC003572", infos[0].SerialNumber)
 	assert.Equal(t, "0000:0C:00.0", infos[0].PCIBus)
-	assert.Equal(t, gpu.Float64(42.9), infos[0].AverageGraphicsPackagePower)
+	assert.Nil(t, infos[0].AverageGraphicsPackagePower)
 	assert.Equal(t, gpu.Uint64(46428848128), infos[0].VRAMTotalMemory)
 	assert.Equal(t, gpu.Uint64(928576962), infos[0].VRAMTotalUsedMemory)
 	assert.Equal(t, 1, infos[1].Num)

@@ -1,0 +1,16 @@
+[
+  {
+    "gpu": 0,
+    "usage": {"gfx_activity": "7.5"},
+    "power": {"socket_power": "N/A", "current_power": 31.25},
+    "temperature": {
+      "edge": 35,
+      "hotspot": "42",
+      "mem": "N/A"
+    },
+    "mem_usage": {
+      "total_vram": 49152,
+      "used_vram": "1024"
+    }
+  }
+]

@@ -22,10 +22,10 @@ func TestParse(t *testing.T) {
 	require.Len(t, infos, 2)
 
 	gpu0 := infos[0]
-	assert.Equal(t, 0, gpu0.Num)
+	assert.Equal(t, 1, gpu0.Num)
 	assert.Equal(t, "1", gpu0.DeviceID)
 	assert.Equal(t, "Houmo", gpu0.CardVendor)
-	assert.Equal(t, "Houmo", gpu0.CardSeries)
+	assert.Empty(t, gpu0.CardSeries)
 	assert.Equal(t, "LQ50-18GB", gpu0.CardModel)
 	assert.Equal(t, "100I2010", gpu0.CardSKU)
 	assert.Equal(t, "0103020100002025003800000003", gpu0.SerialNumber)
@@ -40,7 +40,7 @@ func TestParse(t *testing.T) {
 	assert.Equal(t, gpu.Float64(6.7), gpu0.AverageGraphicsPackagePower)
 
 	gpu1 := infos[1]
-	assert.Equal(t, 1, gpu1.Num)
+	assert.Equal(t, 0, gpu1.Num)
 	assert.Equal(t, "0", gpu1.DeviceID)
 	assert.Equal(t, "LQ50-24GB", gpu1.CardModel)
 	assert.Equal(t, "100O2010", gpu1.CardSKU)
@@ -70,8 +70,15 @@ func TestParseMissingNumericValues(t *testing.T) {
 }
 
 func TestParseInvalidNumericValue(t *testing.T) {
-	_, err := New().parse([]byte("device0 detail infos\nAverage_Util : invalid\n"))
-	assert.Error(t, err)
+	for _, input := range []string{
+		"device0 detail infos\nAverage_Util : invalid\n",
+		"device0 detail infos\nAverage_Util : garbage 12 %\n",
+		"device0 detail infos\nDDR_Memory_Total : junk 100 MB\n",
+		"device0 detail infos\nCore0 : 40 C trailing\n",
+	} {
+		_, err := New().parse([]byte(input))
+		assert.Error(t, err, input)
+	}
 }
 
 func TestVendorAndInterface(t *testing.T) {

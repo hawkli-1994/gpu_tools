@@ -3,6 +3,7 @@ package gpu
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"sync"
 )
@@ -25,7 +26,7 @@ func NewRegistry(loaders ...Loader) (*Registry, error) {
 }
 
 func (r *Registry) Register(loader Loader) error {
-	if loader == nil {
+	if loader == nil || (reflect.ValueOf(loader).Kind() == reflect.Pointer && reflect.ValueOf(loader).IsNil()) {
 		return errors.New("gpu loader is nil")
 	}
 	vendor := loader.Vendor()

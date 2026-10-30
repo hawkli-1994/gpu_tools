@@ -39,6 +39,8 @@ func TestRegistry(t *testing.T) {
 	err = registry.Register(&testLoader{vendor: "A"})
 	assert.ErrorIs(t, err, ErrDuplicateLoader)
 	assert.Error(t, registry.Register(nil))
+	var nilLoader *testLoader
+	assert.Error(t, registry.Register(nilLoader))
 	assert.Error(t, registry.Register(&testLoader{}))
 }
 

@@ -19,8 +19,8 @@ import (
 var (
 	hmDeviceRegex = regexp.MustCompile(`^\s*device(\d+)\s+detail\s+infos\s*$`)
 	hmKVRegex     = regexp.MustCompile(`^\s*([A-Za-z0-9_]+)\s*:\s*(.*)$`)
-	hmFloatRegex  = regexp.MustCompile(`[-+]?(?:\d+(?:\.\d*)?|\.\d+)`)
-	hmMBRegex     = regexp.MustCompile(`([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*MB`)
+	hmFloatRegex  = regexp.MustCompile(`^\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*(?i:(?:%|C|W))?\s*$`)
+	hmMBRegex     = regexp.MustCompile(`^\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*(?i:MB)\s*$`)
 )
 
 func New() *houmoaiSMICommand {
@@ -56,6 +56,7 @@ func (h *houmoaiSMICommand) parse(output []byte) ([]gpu.GPUInfo, error) {
 	result := make([]gpu.GPUInfo, 0)
 	scanner := bufio.NewScanner(bytes.NewReader(output))
 	var current map[string]string
+	var currentNum int
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -63,12 +64,17 @@ func (h *houmoaiSMICommand) parse(output []byte) ([]gpu.GPUInfo, error) {
 		}
 		if matches := hmDeviceRegex.FindStringSubmatch(line); matches != nil {
 			if current != nil {
-				info, err := h.buildGPUInfo(len(result), current)
+				info, err := h.buildGPUInfo(currentNum, current)
 				if err != nil {
 					return nil, err
 				}
 				result = append(result, info)
 			}
+			num, err := strconv.Atoi(matches[1])
+			if err != nil {
+				return nil, fmt.Errorf("parse hm_smi device number %q: %w", matches[1], err)
+			}
+			currentNum = num
 			current = make(map[string]string)
 			continue
 		}
@@ -83,7 +89,7 @@ func (h *houmoaiSMICommand) parse(output []byte) ([]gpu.GPUInfo, error) {
 		return nil, fmt.Errorf("scan hm_smi output: %w", err)
 	}
 	if current != nil {
-		info, err := h.buildGPUInfo(len(result), current)
+		info, err := h.buildGPUInfo(currentNum, current)
 		if err != nil {
 			return nil, err
 		}
@@ -142,7 +148,6 @@ func (h *houmoaiSMICommand) buildGPUInfo(num int, fields map[string]string) (gpu
 		Num:                         num,
 		DeviceID:                    fields["Dev"],
 		CardVendor:                  fields["Vendor"],
-		CardSeries:                  fields["Vendor"],
 		CardModel:                   fields["Model"],
 		CardSKU:                     fields["PN"],
 		SerialNumber:                fields["SN"],
@@ -195,7 +200,7 @@ func firstFloat(value string) (*float64, error) {
 	if len(matches) == 0 {
 		return nil, fmt.Errorf("invalid numeric value %q", value)
 	}
-	parsed, err := gpu.ParseFloat(matches[0])
+	parsed, err := gpu.ParseFloat(matches[1])
 	if err != nil {
 		return nil, err
 	}

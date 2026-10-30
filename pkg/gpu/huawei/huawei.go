@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -46,6 +47,7 @@ func (h *npuSMICommand) Load(ctx context.Context) ([]gpu.GPUInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("extract NPU IDs: %w", err)
 	}
+	memoryUsage := extractMemoryUsage(output)
 
 	result := make([]gpu.GPUInfo, 0)
 	globalNum := 0
@@ -61,6 +63,12 @@ func (h *npuSMICommand) Load(ctx context.Context) ([]gpu.GPUInfo, error) {
 		usagesInfo, err := h.getUsagesInfo(ctx, smiPath, npuID)
 		if err != nil {
 			return nil, err
+		}
+		for chipID, usedMB := range memoryUsage[npuID] {
+			if usagesInfo[chipID] == nil {
+				usagesInfo[chipID] = make(map[string]string)
+			}
+			usagesInfo[chipID]["DDR Usage(MB)"] = usedMB
 		}
 		productInfo, err := h.getProductInfo(ctx, smiPath, npuID)
 		if err != nil {
@@ -99,11 +107,6 @@ func buildGPUInfoList(
 	power map[string]string,
 	globalNum int,
 ) ([]gpu.GPUInfo, int, error) {
-	powerValue, err := parseHuaweiFloat(power["Power Dissipation(W)"])
-	if err != nil {
-		return nil, globalNum, fmt.Errorf("parse NPU %s Power Dissipation(W): %w", npuID, err)
-	}
-
 	chipIDSet := make(map[string]struct{})
 	for chipID := range common {
 		chipIDSet[chipID] = struct{}{}
@@ -123,6 +126,15 @@ func buildGPUInfoList(
 		chipIDs = append(chipIDs, chipID)
 	}
 	sort.Strings(chipIDs)
+
+	var powerValue *float64
+	if len(chipIDs) == 1 {
+		var err error
+		powerValue, err = parseHuaweiFloat(power["Power Dissipation(W)"])
+		if err != nil {
+			return nil, globalNum, fmt.Errorf("parse NPU %s Power Dissipation(W): %w", npuID, err)
+		}
+	}
 
 	infos := make([]gpu.GPUInfo, 0, len(chipIDs))
 	for _, chipID := range chipIDs {
@@ -149,25 +161,33 @@ func buildGPUInfoList(
 		if err != nil {
 			return nil, globalNum, fmt.Errorf("parse NPU %s chip %s DDR Capacity(MB): %w", npuID, chipID, err)
 		}
-		var totalBytes *uint64
-		if capacityMB != nil {
-			bytes := *capacityMB * 1024 * 1024
-			if *capacityMB < 0 || bytes >= math.Exp2(64) {
-				return nil, globalNum, fmt.Errorf("parse NPU %s chip %s DDR Capacity(MB): value out of range", npuID, chipID)
-			}
-			totalBytes = gpu.Uint64(uint64(bytes))
-		}
-		usageRate, err := parseHuaweiFloat(chipUsages["DDR Usage Rate(%)"])
+		totalBytes, err := huaweiMemoryBytes(capacityMB)
 		if err != nil {
-			return nil, globalNum, fmt.Errorf("parse NPU %s chip %s DDR Usage Rate(%%): %w", npuID, chipID, err)
+			return nil, globalNum, fmt.Errorf("parse NPU %s chip %s DDR Capacity(MB): %w", npuID, chipID, err)
 		}
+
 		var usedBytes *uint64
-		if totalBytes != nil && usageRate != nil {
-			used := float64(*totalBytes) * *usageRate / 100
-			if *usageRate < 0 || used >= math.Exp2(64) {
-				return nil, globalNum, fmt.Errorf("parse NPU %s chip %s DDR Usage Rate(%%): value out of range", npuID, chipID)
+		usedMB, err := parseHuaweiFloat(chipUsages["DDR Usage(MB)"])
+		if err != nil {
+			return nil, globalNum, fmt.Errorf("parse NPU %s chip %s DDR Usage(MB): %w", npuID, chipID, err)
+		}
+		if usedMB != nil {
+			usedBytes, err = huaweiMemoryBytes(usedMB)
+			if err != nil {
+				return nil, globalNum, fmt.Errorf("parse NPU %s chip %s DDR Usage(MB): %w", npuID, chipID, err)
 			}
-			usedBytes = gpu.Uint64(uint64(used))
+		} else {
+			usageRate, err := parseHuaweiFloat(chipUsages["DDR Usage Rate(%)"])
+			if err != nil {
+				return nil, globalNum, fmt.Errorf("parse NPU %s chip %s DDR Usage Rate(%%): %w", npuID, chipID, err)
+			}
+			if totalBytes != nil && usageRate != nil {
+				used := float64(*totalBytes) * *usageRate / 100
+				if *usageRate < 0 || *usageRate > 100 || used >= math.Exp2(64) {
+					return nil, globalNum, fmt.Errorf("parse NPU %s chip %s DDR Usage Rate(%%): value out of range", npuID, chipID)
+				}
+				usedBytes = gpu.Uint64(uint64(used))
+			}
 		}
 
 		model := ""
@@ -205,6 +225,58 @@ func parseHuaweiFloat(value string) (*float64, error) {
 		return nil, fmt.Errorf("non-finite value %q", value)
 	}
 	return parsed, nil
+}
+
+func huaweiMemoryBytes(mb *float64) (*uint64, error) {
+	if mb == nil {
+		return nil, nil
+	}
+	bytes := *mb * 1024 * 1024
+	if *mb < 0 || bytes >= math.Exp2(64) {
+		return nil, fmt.Errorf("value out of range")
+	}
+	return gpu.Uint64(uint64(bytes)), nil
+}
+
+var memoryUsageRegex = regexp.MustCompile(`([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*/\s*[-+]?(?:\d+(?:\.\d*)?|\.\d+)`)
+
+func extractMemoryUsage(output []byte) map[string]map[string]string {
+	result := make(map[string]map[string]string)
+	var npuID string
+	scanner := bufio.NewScanner(bytes.NewReader(output))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.Contains(line, "Process id") && strings.Contains(line, "Process name") {
+			break
+		}
+		if !strings.HasPrefix(line, "|") {
+			continue
+		}
+		parts := strings.Split(line, "|")
+		if len(parts) < 4 {
+			continue
+		}
+		tokens := strings.Fields(parts[1])
+		if len(tokens) == 0 || !isAllDigits(tokens[0]) {
+			continue
+		}
+		if len(tokens) >= 2 && !isAllDigits(tokens[1]) {
+			npuID = tokens[0]
+			continue
+		}
+		if npuID == "" {
+			continue
+		}
+		matches := memoryUsageRegex.FindStringSubmatch(parts[3])
+		if len(matches) < 2 {
+			continue
+		}
+		if result[npuID] == nil {
+			result[npuID] = make(map[string]string)
+		}
+		result[npuID][tokens[0]] = matches[1]
+	}
+	return result
 }
 
 func extractNPUIDs(output []byte) ([]string, error) {

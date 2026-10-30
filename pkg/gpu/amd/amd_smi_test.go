@@ -97,6 +97,38 @@ func TestAMDSMIParseUnavailableMetricGroups(t *testing.T) {
 	assert.Equal(t, "0xDBA7EBE13A88DDBD", second.SerialNumber)
 }
 
+func TestAMDSMIParseLegacyScalarValues(t *testing.T) {
+	staticOutput, err := os.ReadFile("testdata/amd_smi_legacy_static.json")
+	require.NoError(t, err)
+	metricOutput, err := os.ReadFile("testdata/amd_smi_legacy_metric.json")
+	require.NoError(t, err)
+
+	infos, err := (&amdSMICommand{}).parse(staticOutput, metricOutput)
+	require.NoError(t, err)
+	require.Len(t, infos, 1)
+
+	info := infos[0]
+	assert.Equal(t, "0x740f", info.DeviceID)
+	assert.Equal(t, gpu.Float64(35), info.TemperatureEdge)
+	assert.Equal(t, gpu.Float64(42), info.TemperatureJunction)
+	assert.Nil(t, info.TemperatureMemory)
+	assert.Equal(t, gpu.Float64(31.25), info.AverageGraphicsPackagePower)
+	assert.Equal(t, gpu.Float64(7.5), info.GPUUse)
+	assert.Equal(t, gpu.Uint64(51539607552), info.VRAMTotalMemory)
+	assert.Equal(t, gpu.Uint64(1073741824), info.VRAMTotalUsedMemory)
+}
+
+func TestAMDSMIParseCurrentPowerWithoutSocketPower(t *testing.T) {
+	staticOutput, err := os.ReadFile("testdata/amd_smi_legacy_static.json")
+	require.NoError(t, err)
+	metricOutput := []byte(`[{"gpu":0,"power":{"current_power":{"value":18.5,"unit":"W"}}}]`)
+
+	infos, err := (&amdSMICommand{}).parse(staticOutput, metricOutput)
+	require.NoError(t, err)
+	require.Len(t, infos, 1)
+	assert.Equal(t, gpu.Float64(18.5), infos[0].AverageGraphicsPackagePower)
+}
+
 func TestAMDSMIParseInvalidJSON(t *testing.T) {
 	validStatic, err := os.ReadFile("testdata/amd_smi_static.json")
 	require.NoError(t, err)

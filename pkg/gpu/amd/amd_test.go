@@ -1,6 +1,10 @@
 package amd
 
 import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hawkli-1994/gpu_tools/pkg/gpu"
@@ -31,6 +35,49 @@ func TestROCMSMIParse(t *testing.T) {
 	assert.Equal(t, "Advanced Micro Devices, Inc. [AMD/ATI]", info.CardVendor)
 	assert.Equal(t, "EXT94393", info.CardSKU)
 	assert.Equal(t, "0000:0e:00.0", info.PCIBus)
+}
+
+func TestROCMSMIParseCurrentPowerFallback(t *testing.T) {
+	jsonData := `{"card0":{"Average Graphics Package Power (W)":"N/A","Current Socket Graphics Package Power (W)":"12.5"},"card1":{"Current Socket Graphics Package Power (W)":"8.25"}}`
+
+	infos, err := (&rocmSMICommand{}).parse([]byte(jsonData))
+	require.NoError(t, err)
+	require.Len(t, infos, 2)
+	assert.Equal(t, gpu.Float64(12.5), infos[0].AverageGraphicsPackagePower)
+	assert.Equal(t, gpu.Float64(8.25), infos[1].AverageGraphicsPackagePower)
+}
+
+func TestROCMSMILoadUsesPATHAndShowID(t *testing.T) {
+	tempDir := t.TempDir()
+	argsPath := filepath.Join(tempDir, "args")
+	commandPath := filepath.Join(tempDir, "rocm-smi")
+	script := `#!/bin/sh
+printf '%s\n' "$@" > "$ROCM_SMI_ARGS"
+printf '%s\n' '{"card0":{"Device ID":"0x747e"}}'
+`
+	require.NoError(t, os.WriteFile(commandPath, []byte(script), 0o755))
+	t.Setenv("PATH", tempDir)
+	t.Setenv("ROCM_SMI_ARGS", argsPath)
+
+	infos, err := (&rocmSMICommand{}).Load(context.Background())
+	require.NoError(t, err)
+	require.Len(t, infos, 1)
+	assert.Equal(t, "0x747e", infos[0].DeviceID)
+
+	argsOutput, err := os.ReadFile(argsPath)
+	require.NoError(t, err)
+	args := strings.Split(strings.TrimSpace(string(argsOutput)), "\n")
+	assert.Equal(t, []string{
+		"--showid",
+		"--showmeminfo", "vram",
+		"--showpower",
+		"--showserial",
+		"--showuse",
+		"--showtemp",
+		"--showproductname",
+		"--showbus",
+		"--json",
+	}, args)
 }
 
 func TestROCMSMIParseRejectsInvalidMetric(t *testing.T) {

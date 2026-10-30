@@ -42,12 +42,15 @@ type rocmSMICommand struct {
 }
 
 func (r *rocmSMICommand) Load(ctx context.Context) ([]gpu.GPUInfo, error) {
-	const command = "/usr/bin/rocm-smi"
-	if _, err := exec.LookPath(command); err != nil {
-		return nil, unavailable("ROCm", command, err)
+	const command = "rocm-smi"
+	commandPath, err := exec.LookPath(command)
+	if err != nil {
+		commandPath, err = exec.LookPath("/opt/rocm/bin/rocm-smi")
+		if err != nil {
+			return nil, unavailable("ROCm", command, err)
+		}
 	}
-	cmd := exec.CommandContext(ctx, command, "--showmeminfo", "vram", "--showpower", "--showserial", "--showuse", "--showtemp", "--showproductname", "--showbus", "--json")
-	cmd.Env = append(os.Environ(), "PATH=/usr/bin:/usr/local/bin:/bin:/usr/sbin:/sbin")
+	cmd := exec.CommandContext(ctx, commandPath, "--showid", "--showmeminfo", "vram", "--showpower", "--showserial", "--showuse", "--showtemp", "--showproductname", "--showbus", "--json")
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, commandError("ROCm", "load", command, ctx, err)
@@ -56,21 +59,22 @@ func (r *rocmSMICommand) Load(ctx context.Context) ([]gpu.GPUInfo, error) {
 }
 
 type rocmGPUInfo struct {
-	DeviceID                    string `json:"Device ID"`
-	DeviceRev                   string `json:"Device Rev"`
-	TemperatureEdge             string `json:"Temperature (Sensor edge) (C)"`
-	TemperatureJunction         string `json:"Temperature (Sensor junction) (C)"`
-	TemperatureMemory           string `json:"Temperature (Sensor memory) (C)"`
-	AverageGraphicsPackagePower string `json:"Average Graphics Package Power (W)"`
-	GPUUse                      string `json:"GPU use (%)"`
-	SerialNumber                string `json:"Serial Number"`
-	VRAMTotalMemory             string `json:"VRAM Total Memory (B)"`
-	VRAMTotalUsedMemory         string `json:"VRAM Total Used Memory (B)"`
-	CardSeries                  string `json:"Card series"`
-	CardModel                   string `json:"Card model"`
-	CardVendor                  string `json:"Card vendor"`
-	CardSKU                     string `json:"Card SKU"`
-	PCIBus                      string `json:"PCI Bus"`
+	DeviceID                          string `json:"Device ID"`
+	DeviceRev                         string `json:"Device Rev"`
+	TemperatureEdge                   string `json:"Temperature (Sensor edge) (C)"`
+	TemperatureJunction               string `json:"Temperature (Sensor junction) (C)"`
+	TemperatureMemory                 string `json:"Temperature (Sensor memory) (C)"`
+	AverageGraphicsPackagePower       string `json:"Average Graphics Package Power (W)"`
+	CurrentSocketGraphicsPackagePower string `json:"Current Socket Graphics Package Power (W)"`
+	GPUUse                            string `json:"GPU use (%)"`
+	SerialNumber                      string `json:"Serial Number"`
+	VRAMTotalMemory                   string `json:"VRAM Total Memory (B)"`
+	VRAMTotalUsedMemory               string `json:"VRAM Total Used Memory (B)"`
+	CardSeries                        string `json:"Card series"`
+	CardModel                         string `json:"Card model"`
+	CardVendor                        string `json:"Card vendor"`
+	CardSKU                           string `json:"Card SKU"`
+	PCIBus                            string `json:"PCI Bus"`
 }
 
 func (r *rocmSMICommand) parse(output []byte) ([]gpu.GPUInfo, error) {
@@ -106,6 +110,11 @@ func (r *rocmSMICommand) parse(output []byte) ([]gpu.GPUInfo, error) {
 		}
 		if info.AverageGraphicsPackagePower, err = gpu.ParseFloat(data.AverageGraphicsPackagePower); err != nil {
 			return nil, fmt.Errorf("parse rocm-smi GPU %d power: %w", num, err)
+		}
+		if info.AverageGraphicsPackagePower == nil {
+			if info.AverageGraphicsPackagePower, err = gpu.ParseFloat(data.CurrentSocketGraphicsPackagePower); err != nil {
+				return nil, fmt.Errorf("parse rocm-smi GPU %d current power: %w", num, err)
+			}
 		}
 		if info.GPUUse, err = gpu.ParseFloat(data.GPUUse); err != nil {
 			return nil, fmt.Errorf("parse rocm-smi GPU %d utilization: %w", num, err)

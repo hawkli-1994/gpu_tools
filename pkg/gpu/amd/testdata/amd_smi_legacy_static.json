@@ -1,0 +1,18 @@
+[
+  {
+    "gpu": 0,
+    "asic": {
+      "market_name": "AMD Instinct MI210",
+      "vendor_name": "Advanced Micro Devices, Inc. [AMD/ATI]",
+      "device_id": "0x740f",
+      "rev_id": "0x01",
+      "asic_serial": "0x1234567890ABCDEF"
+    },
+    "bus": {"bdf": "0000:03:00.0"},
+    "board": {
+      "model_number": "MI210",
+      "manufacturer_name": "Advanced Micro Devices, Inc. [AMD/ATI]"
+    },
+    "vram": {"size": 49152}
+  }
+]

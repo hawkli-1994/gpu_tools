@@ -1,7 +1,10 @@
 package nvidia
 
 import (
+	"context"
 	_ "embed"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/hawkli-1994/gpu_tools/pkg/gpu"
@@ -52,6 +55,19 @@ func TestParseEmptyData(t *testing.T) {
 	infos, err := (&nvidiaSMICommand{}).parse(nil)
 	assert.NoError(t, err)
 	assert.Empty(t, infos)
+}
+
+func TestCommandErrorsIncludeDiagnosticOutput(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nvidia-smi")
+	script := "#!/bin/sh\necho 'driver communication failed' >&2\nexit 1\n"
+	require.NoError(t, os.WriteFile(path, []byte(script), 0o755))
+	t.Setenv("PATH", dir)
+
+	_, err := New().Load(context.Background())
+	assert.ErrorContains(t, err, "driver communication failed")
+	_, err = New().DriverInfo(context.Background())
+	assert.ErrorContains(t, err, "driver communication failed")
 }
 
 //go:embed testdata/nvidia_version.txt

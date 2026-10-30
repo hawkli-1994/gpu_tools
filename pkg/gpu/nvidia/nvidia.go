@@ -24,10 +24,15 @@ func (n *nvidiaSMICommand) Load(ctx context.Context) ([]gpu.GPUInfo, error) {
 	if _, err := exec.LookPath(command); err != nil {
 		return nil, &gpu.OpError{Vendor: n.Vendor(), Op: "load", Command: command, Err: fmt.Errorf("%w: %w", gpu.ErrUnavailable, err)}
 	}
-	output, err := exec.CommandContext(ctx, command, "--format=csv,noheader", "--query-gpu=index,name,memory.total,memory.used,utilization.gpu,temperature.gpu,pci.bus_id").Output()
+	cmd := exec.CommandContext(ctx, command, "--format=csv,noheader", "--query-gpu=index,name,memory.total,memory.used,utilization.gpu,temperature.gpu,pci.bus_id")
+	output, err := cmd.Output()
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			err = ctxErr
+		} else if exitErr, ok := err.(*exec.ExitError); ok {
+			if message := strings.TrimSpace(string(exitErr.Stderr)); message != "" {
+				err = fmt.Errorf("%w: %s", err, message)
+			}
 		}
 		return nil, &gpu.OpError{Vendor: n.Vendor(), Op: "load", Command: command, Err: err}
 	}
@@ -122,6 +127,8 @@ func (n *nvidiaSMICommand) DriverInfo(ctx context.Context) (gpu.GPUDriverInfo, e
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			err = ctxErr
+		} else if message := strings.TrimSpace(string(output)); message != "" {
+			err = fmt.Errorf("%w: %s", err, message)
 		}
 		return gpu.GPUDriverInfo{}, &gpu.OpError{Vendor: n.Vendor(), Op: "driver info", Command: command, Err: err}
 	}
