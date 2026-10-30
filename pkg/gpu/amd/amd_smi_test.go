@@ -1,6 +1,7 @@
 package amd
 
 import (
+	"encoding/json"
 	"os"
 	"testing"
 
@@ -42,6 +43,58 @@ func TestAMDSMIParse(t *testing.T) {
 	assert.Equal(t, gpu.Float64(0.5), second.GPUUse)
 	assert.Equal(t, gpu.Uint64(524288), second.VRAMTotalUsedMemory)
 	assert.Equal(t, "Advanced Micro Devices, Inc. [AMD/ATI]", second.CardVendor)
+}
+
+func TestAMDSMIParseLegacyTopLevelArrays(t *testing.T) {
+	staticOutput, err := os.ReadFile("testdata/amd_smi_static.json")
+	require.NoError(t, err)
+	metricOutput, err := os.ReadFile("testdata/amd_smi_metric.json")
+	require.NoError(t, err)
+
+	legacyGPUData := func(output []byte) []byte {
+		var wrapped struct {
+			GPUData json.RawMessage `json:"gpu_data"`
+		}
+		require.NoError(t, json.Unmarshal(output, &wrapped))
+		require.NotEmpty(t, wrapped.GPUData)
+		return wrapped.GPUData
+	}
+	expected, err := (&amdSMICommand{}).parse(staticOutput, metricOutput)
+	require.NoError(t, err)
+	actual, err := (&amdSMICommand{}).parse(legacyGPUData(staticOutput), legacyGPUData(metricOutput))
+	require.NoError(t, err)
+	assert.Equal(t, expected, actual)
+}
+
+func TestAMDSMIParseUnavailableMetricGroups(t *testing.T) {
+	staticOutput, err := os.ReadFile("testdata/amd_smi_static.json")
+	require.NoError(t, err)
+	metricOutput, err := os.ReadFile("testdata/amd_smi_metric.json")
+	require.NoError(t, err)
+	var metric struct {
+		GPUData []map[string]json.RawMessage `json:"gpu_data"`
+	}
+	require.NoError(t, json.Unmarshal(metricOutput, &metric))
+	require.Len(t, metric.GPUData, 2)
+	for _, group := range []string{"usage", "power", "temperature", "mem_usage"} {
+		metric.GPUData[1][group] = json.RawMessage(`"N/A"`)
+	}
+	metricOutput, err = json.Marshal(metric)
+	require.NoError(t, err)
+
+	infos, err := (&amdSMICommand{}).parse(staticOutput, metricOutput)
+	require.NoError(t, err)
+	require.Len(t, infos, 2)
+	assert.Equal(t, gpu.Float64(12), infos[0].GPUUse)
+	second := infos[1]
+	assert.Nil(t, second.TemperatureEdge)
+	assert.Nil(t, second.TemperatureJunction)
+	assert.Nil(t, second.TemperatureMemory)
+	assert.Nil(t, second.AverageGraphicsPackagePower)
+	assert.Nil(t, second.GPUUse)
+	assert.Nil(t, second.VRAMTotalUsedMemory)
+	assert.Equal(t, gpu.Uint64(48301604864), second.VRAMTotalMemory)
+	assert.Equal(t, "0xDBA7EBE13A88DDBD", second.SerialNumber)
 }
 
 func TestAMDSMIParseInvalidJSON(t *testing.T) {

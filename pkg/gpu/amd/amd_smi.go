@@ -41,48 +41,105 @@ type smiValue struct {
 	Unit  string          `json:"unit"`
 }
 
+type smiStaticGPU struct {
+	GPU  int `json:"gpu"`
+	ASIC struct {
+		MarketName string `json:"market_name"`
+		VendorName string `json:"vendor_name"`
+		DeviceID   string `json:"device_id"`
+		RevID      string `json:"rev_id"`
+		Serial     string `json:"asic_serial"`
+	} `json:"asic"`
+	Bus struct {
+		BDF string `json:"bdf"`
+	} `json:"bus"`
+	Board struct {
+		ModelNumber  string `json:"model_number"`
+		Manufacturer string `json:"manufacturer_name"`
+	} `json:"board"`
+	VRAM struct {
+		Size smiValue `json:"size"`
+	} `json:"vram"`
+}
+
 type smiStaticData struct {
-	GPUData []struct {
-		GPU  int `json:"gpu"`
-		ASIC struct {
-			MarketName string `json:"market_name"`
-			VendorName string `json:"vendor_name"`
-			DeviceID   string `json:"device_id"`
-			RevID      string `json:"rev_id"`
-			Serial     string `json:"asic_serial"`
-		} `json:"asic"`
-		Bus struct {
-			BDF string `json:"bdf"`
-		} `json:"bus"`
-		Board struct {
-			ModelNumber  string `json:"model_number"`
-			Manufacturer string `json:"manufacturer_name"`
-		} `json:"board"`
-		VRAM struct {
-			Size smiValue `json:"size"`
-		} `json:"vram"`
-	} `json:"gpu_data"`
+	GPUData []smiStaticGPU `json:"gpu_data"`
+}
+
+func (d *smiStaticData) UnmarshalJSON(output []byte) error {
+	if strings.HasPrefix(strings.TrimSpace(string(output)), "[") {
+		return json.Unmarshal(output, &d.GPUData)
+	}
+	type plain smiStaticData
+	var decoded plain
+	if err := json.Unmarshal(output, &decoded); err != nil {
+		return err
+	}
+	*d = smiStaticData(decoded)
+	return nil
+}
+
+type smiGroup[T any] struct {
+	Value T
+}
+
+func (g *smiGroup[T]) UnmarshalJSON(output []byte) error {
+	var text string
+	if err := json.Unmarshal(output, &text); err == nil && strings.EqualFold(text, "N/A") {
+		var zero T
+		g.Value = zero
+		return nil
+	}
+	var value T
+	if err := json.Unmarshal(output, &value); err != nil {
+		return err
+	}
+	g.Value = value
+	return nil
+}
+
+type smiUsage struct {
+	GFXActivity smiValue `json:"gfx_activity"`
+}
+
+type smiPower struct {
+	SocketPower smiValue `json:"socket_power"`
+}
+
+type smiTemperature struct {
+	Edge    smiValue `json:"edge"`
+	Hotspot smiValue `json:"hotspot"`
+	Memory  smiValue `json:"mem"`
+}
+
+type smiMemoryUsage struct {
+	TotalVRAM smiValue `json:"total_vram"`
+	UsedVRAM  smiValue `json:"used_vram"`
+}
+
+type smiMetricGPU struct {
+	GPU         int                      `json:"gpu"`
+	Usage       smiGroup[smiUsage]       `json:"usage"`
+	Power       smiGroup[smiPower]       `json:"power"`
+	Temperature smiGroup[smiTemperature] `json:"temperature"`
+	MemoryUsage smiGroup[smiMemoryUsage] `json:"mem_usage"`
 }
 
 type smiMetricData struct {
-	GPUData []struct {
-		GPU   int `json:"gpu"`
-		Usage struct {
-			GFXActivity smiValue `json:"gfx_activity"`
-		} `json:"usage"`
-		Power struct {
-			SocketPower smiValue `json:"socket_power"`
-		} `json:"power"`
-		Temperature struct {
-			Edge    smiValue `json:"edge"`
-			Hotspot smiValue `json:"hotspot"`
-			Memory  smiValue `json:"mem"`
-		} `json:"temperature"`
-		MemoryUsage struct {
-			TotalVRAM smiValue `json:"total_vram"`
-			UsedVRAM  smiValue `json:"used_vram"`
-		} `json:"mem_usage"`
-	} `json:"gpu_data"`
+	GPUData []smiMetricGPU `json:"gpu_data"`
+}
+
+func (d *smiMetricData) UnmarshalJSON(output []byte) error {
+	if strings.HasPrefix(strings.TrimSpace(string(output)), "[") {
+		return json.Unmarshal(output, &d.GPUData)
+	}
+	type plain smiMetricData
+	var decoded plain
+	if err := json.Unmarshal(output, &decoded); err != nil {
+		return err
+	}
+	*d = smiMetricData(decoded)
+	return nil
 }
 
 func (a *amdSMICommand) parse(staticOutput, metricOutput []byte) ([]gpu.GPUInfo, error) {
@@ -122,26 +179,26 @@ func (a *amdSMICommand) parse(staticOutput, metricOutput []byte) ([]gpu.GPUInfo,
 		info := infos[data.GPU]
 		info.Num = data.GPU
 		var err error
-		if info.TemperatureEdge, err = data.Temperature.Edge.float(); err != nil {
+		if info.TemperatureEdge, err = data.Temperature.Value.Edge.float(); err != nil {
 			return nil, fmt.Errorf("parse amd-smi GPU %d edge temperature: %w", data.GPU, err)
 		}
-		if info.TemperatureJunction, err = data.Temperature.Hotspot.float(); err != nil {
+		if info.TemperatureJunction, err = data.Temperature.Value.Hotspot.float(); err != nil {
 			return nil, fmt.Errorf("parse amd-smi GPU %d hotspot temperature: %w", data.GPU, err)
 		}
-		if info.TemperatureMemory, err = data.Temperature.Memory.float(); err != nil {
+		if info.TemperatureMemory, err = data.Temperature.Value.Memory.float(); err != nil {
 			return nil, fmt.Errorf("parse amd-smi GPU %d memory temperature: %w", data.GPU, err)
 		}
-		if info.AverageGraphicsPackagePower, err = data.Power.SocketPower.float(); err != nil {
+		if info.AverageGraphicsPackagePower, err = data.Power.Value.SocketPower.float(); err != nil {
 			return nil, fmt.Errorf("parse amd-smi GPU %d power: %w", data.GPU, err)
 		}
-		if info.GPUUse, err = data.Usage.GFXActivity.float(); err != nil {
+		if info.GPUUse, err = data.Usage.Value.GFXActivity.float(); err != nil {
 			return nil, fmt.Errorf("parse amd-smi GPU %d utilization: %w", data.GPU, err)
 		}
-		totalMemory, err := data.MemoryUsage.TotalVRAM.bytes()
+		totalMemory, err := data.MemoryUsage.Value.TotalVRAM.bytes()
 		if err != nil {
 			return nil, fmt.Errorf("parse amd-smi GPU %d total VRAM: %w", data.GPU, err)
 		}
-		usedMemory, err := data.MemoryUsage.UsedVRAM.bytes()
+		usedMemory, err := data.MemoryUsage.Value.UsedVRAM.bytes()
 		if err != nil {
 			return nil, fmt.Errorf("parse amd-smi GPU %d used VRAM: %w", data.GPU, err)
 		}

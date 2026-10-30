@@ -238,6 +238,21 @@ func TestBuildGPUInfoList(t *testing.T) {
 	assert.Equal(t, gpu.Float64(20), infos[1].GPUUse)
 }
 
+func TestBuildGPUInfoListVRAMCalculationRounding(t *testing.T) {
+	usages := map[string]map[string]string{
+		"0": {"DDR Capacity(MB)": "10000", "DDR Usage Rate(%)": "33.3"},
+	}
+	common := map[string]map[string]string{
+		"0": {"Temperature(C)": "40"},
+	}
+
+	infos, _, err := buildGPUInfoList("2944", nil, common, usages, nil, nil, 0)
+	require.NoError(t, err)
+	require.Len(t, infos, 1)
+	assert.Equal(t, gpu.Uint64(10485760000), infos[0].VRAMTotalMemory)
+	assert.Equal(t, gpu.Uint64(3491758080), infos[0].VRAMTotalUsedMemory)
+}
+
 func TestBuildGPUInfoListMissingValues(t *testing.T) {
 	infos, nextNum, err := buildGPUInfoList("2944", nil, nil, map[string]map[string]string{
 		"0": {"DDR Capacity(MB)": "10000", "DDR Usage Rate(%)": "50", "Aicore Usage Rate(%)": "NA"},
@@ -281,6 +296,37 @@ func TestNew(t *testing.T) {
 	var _ gpu.Loader = loader
 }
 
+func TestLoadFromFixtures(t *testing.T) {
+	fixtureDir, err := filepath.Abs("testdata")
+	require.NoError(t, err)
+	t.Setenv("NPU_FIXTURE_DIR", fixtureDir)
+	dir := t.TempDir()
+	script := `#!/bin/sh
+case "$*" in
+"info") file=npu_info.txt ;;
+"info -t board -i 2944") file=npu_board.txt ;;
+"info -t common -i 2944") file=npu_common.txt ;;
+"info -t usages -i 2944") file=npu_usages.txt ;;
+"info -t product -i 2944") file=npu_product.txt ;;
+"info -t power -i 2944") file=npu_power.txt ;;
+*) echo "unexpected arguments: $*" >&2; exit 2 ;;
+esac
+cat "$NPU_FIXTURE_DIR/$file"
+`
+	path := filepath.Join(dir, "npu-smi")
+	require.NoError(t, os.WriteFile(path, []byte(script), 0o755))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	infos, err := New().Load(context.Background())
+	require.NoError(t, err)
+	require.Len(t, infos, 2)
+	assert.Equal(t, 0, infos[0].Num)
+	assert.Equal(t, 1, infos[1].Num)
+	assert.Equal(t, "0", infos[0].DeviceID)
+	assert.Equal(t, "1", infos[1].DeviceID)
+	assert.Equal(t, "0000:0C:00.0", infos[0].PCIBus)
+}
+
 func TestLoadReturnsSubcommandError(t *testing.T) {
 	dir := t.TempDir()
 	script := `#!/bin/sh
@@ -315,13 +361,23 @@ func TestIntegrationDualChipFromFixtures(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, infos, 2)
 	assert.Equal(t, 2, nextNum)
+	assert.Equal(t, 0, infos[0].Num)
+	assert.Equal(t, "0", infos[0].DeviceID)
+	assert.Equal(t, "Huawei", infos[0].CardVendor)
+	assert.Equal(t, "Ascend", infos[0].CardSeries)
 	assert.Equal(t, "Atlas 300I Duo", infos[0].CardModel)
 	assert.Equal(t, gpu.Float64(45), infos[0].TemperatureEdge)
 	assert.Equal(t, gpu.Float64(0), infos[0].GPUUse)
 	assert.Equal(t, "2106030737ZERC003572", infos[0].SerialNumber)
+	assert.Equal(t, "0000:0C:00.0", infos[0].PCIBus)
 	assert.Equal(t, gpu.Float64(42.9), infos[0].AverageGraphicsPackagePower)
 	assert.Equal(t, gpu.Uint64(46428848128), infos[0].VRAMTotalMemory)
 	assert.Equal(t, gpu.Uint64(928576962), infos[0].VRAMTotalUsedMemory)
+	assert.Equal(t, 1, infos[1].Num)
+	assert.Equal(t, "1", infos[1].DeviceID)
+	assert.Equal(t, "Atlas 300I Duo", infos[1].CardModel)
+	assert.Equal(t, gpu.Float64(47), infos[1].TemperatureEdge)
+	assert.Equal(t, gpu.Float64(0), infos[1].GPUUse)
 	assert.Equal(t, gpu.Uint64(45815431168), infos[1].VRAMTotalMemory)
 	assert.Equal(t, gpu.Uint64(1374462935), infos[1].VRAMTotalUsedMemory)
 }
@@ -339,10 +395,12 @@ func TestIntegrationSingleChipFromFixtures(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, infos, 1)
 	assert.Equal(t, 1, nextNum)
+	assert.Equal(t, "0", infos[0].DeviceID)
 	assert.Equal(t, "Atlas 300I Pro", infos[0].CardModel)
 	assert.Equal(t, gpu.Float64(55), infos[0].TemperatureEdge)
 	assert.Equal(t, gpu.Float64(10), infos[0].GPUUse)
 	assert.Equal(t, "SN987654321", infos[0].SerialNumber)
+	assert.Equal(t, "0000:01:00.0", infos[0].PCIBus)
 	assert.Equal(t, gpu.Float64(65.5), infos[0].AverageGraphicsPackagePower)
 	assert.Equal(t, gpu.Uint64(23068672000), infos[0].VRAMTotalMemory)
 	assert.Equal(t, gpu.Uint64(2306867200), infos[0].VRAMTotalUsedMemory)

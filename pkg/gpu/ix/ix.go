@@ -89,15 +89,20 @@ func (a *ixGPU) Load(ctx context.Context) ([]gpu.GPUInfo, error) {
 	if smiPath == "" {
 		return nil, &gpu.OpError{Vendor: a.Vendor(), Op: "find ixsmi", Err: fmt.Errorf("ixsmi not found: %w", gpu.ErrUnavailable)}
 	}
+	return a.load(ctx, smiPath)
+}
 
+func (a *ixGPU) load(ctx context.Context, smiPath string) ([]gpu.GPUInfo, error) {
 	cmd := exec.CommandContext(ctx, smiPath, "-q", "-x")
 	cmd.Env = ixsmiEnv(smiPath)
-	data, err := cmd.CombinedOutput()
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	data, err := cmd.Output()
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, &gpu.OpError{Vendor: a.Vendor(), Op: "query", Command: cmd.String(), Err: ctxErr}
 		}
-		if message := strings.TrimSpace(string(data)); message != "" {
+		if message := strings.TrimSpace(stderr.String()); message != "" {
 			err = fmt.Errorf("%w: %s", err, message)
 		}
 		return nil, &gpu.OpError{Vendor: a.Vendor(), Op: "query", Command: cmd.String(), Err: err}

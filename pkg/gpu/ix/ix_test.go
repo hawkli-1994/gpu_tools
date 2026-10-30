@@ -1,6 +1,7 @@
 package ix
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,6 +48,28 @@ func TestIxsmiEnvDoesNotMutateGlobalEnv(t *testing.T) {
 	ixsmiEnv("/usr/local/corex-4.4.0/bin/ixsmi")
 	assert.Equal(t, origPath, os.Getenv("PATH"))
 	assert.Equal(t, origLibPath, os.Getenv("LD_LIBRARY_PATH"))
+}
+
+func TestLoadKeepsStderrOutOfXML(t *testing.T) {
+	fixture, err := filepath.Abs(filepath.Join("testdata", "ixsmi.xml"))
+	require.NoError(t, err)
+	t.Setenv("IXSMI_FIXTURE", fixture)
+	binDir := filepath.Join(t.TempDir(), "bin")
+	require.NoError(t, os.MkdirAll(binDir, 0o755))
+	smiPath := filepath.Join(binDir, "ixsmi")
+	script := `#!/bin/sh
+if [ "$#" -ne 2 ] || [ "$1" != "-q" ] || [ "$2" != "-x" ]; then
+	exit 2
+fi
+cat "$IXSMI_FIXTURE"
+echo 'driver warning' >&2
+`
+	require.NoError(t, os.WriteFile(smiPath, []byte(script), 0o755))
+
+	infos, err := New().load(context.Background(), smiPath)
+	require.NoError(t, err)
+	require.Len(t, infos, 2)
+	assert.Equal(t, "23490256585496", infos[0].SerialNumber)
 }
 
 func TestParseIXSMI(t *testing.T) {
