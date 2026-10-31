@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/hawkli-1994/gpu_tools/pkg/gpu"
@@ -84,7 +85,10 @@ func (a *ixGPU) Load(ctx context.Context) ([]gpu.GPUInfo, error) {
 	}
 	smiPath, err := autoFindSmiPath()
 	if err != nil {
-		return nil, &gpu.OpError{Vendor: a.Vendor(), Op: "find ixsmi", Err: fmt.Errorf("%w: %w", gpu.ErrUnavailable, err)}
+		if errors.Is(err, os.ErrNotExist) {
+			err = fmt.Errorf("%w: %w", gpu.ErrUnavailable, err)
+		}
+		return nil, &gpu.OpError{Vendor: a.Vendor(), Op: "find ixsmi", Err: err}
 	}
 	if smiPath == "" {
 		return nil, &gpu.OpError{Vendor: a.Vendor(), Op: "find ixsmi", Err: fmt.Errorf("ixsmi not found: %w", gpu.ErrUnavailable)}
@@ -130,6 +134,9 @@ func ParseIXSMI(data string) ([]gpu.GPUInfo, error) {
 	type Temperature struct {
 		GPUTemp string `xml:"gpu_temp"`
 	}
+	type PowerReadings struct {
+		GPUPowerDraw string `xml:"gpu_power_draw"`
+	}
 	type PCI struct {
 		Bus         string `xml:"pci_bus"`
 		Device      string `xml:"pci_device"`
@@ -139,41 +146,58 @@ func ParseIXSMI(data string) ([]gpu.GPUInfo, error) {
 		SubSystemID string `xml:"pci_sub_system_id"`
 	}
 	type GPU struct {
-		ID      string      `xml:"id,attr"`
-		Product string      `xml:"product_name"`
-		Serial  string      `xml:"serial"`
-		Minor   string      `xml:"minor_number"`
-		Memory  MemoryUsage `xml:"memory_usage"`
-		Util    Utilization `xml:"utilization"`
-		Temp    Temperature `xml:"temperature"`
-		PCI     PCI         `xml:"pci"`
+		ID            string        `xml:"id,attr"`
+		Product       string        `xml:"product_name"`
+		Serial        string        `xml:"serial"`
+		Minor         string        `xml:"minor_number"`
+		Memory        MemoryUsage   `xml:"memory_usage"`
+		Util          Utilization   `xml:"utilization"`
+		Temp          Temperature   `xml:"temperature"`
+		PowerReadings PowerReadings `xml:"power_readings"`
+		PCI           PCI           `xml:"pci"`
 	}
 	type IXSMILog struct {
-		XMLName xml.Name `xml:"ixsmi_log"`
-		GPUs    []GPU    `xml:"gpu"`
+		XMLName      xml.Name `xml:"ixsmi_log"`
+		AttachedGPUs *int     `xml:"attached_gpus"`
+		GPUs         []GPU    `xml:"gpu"`
 	}
 
 	var log IXSMILog
 	if err := xml.Unmarshal([]byte(data), &log); err != nil {
 		return nil, fmt.Errorf("parse ixsmi XML: %w", err)
 	}
+	if log.AttachedGPUs != nil && (*log.AttachedGPUs < 0 || *log.AttachedGPUs != len(log.GPUs)) {
+		return nil, fmt.Errorf("parse ixsmi XML: attached GPU count %d does not match %d parsed devices", *log.AttachedGPUs, len(log.GPUs))
+	}
 	infos := make([]gpu.GPUInfo, 0, len(log.GPUs))
 	for i, device := range log.GPUs {
+		num := i
+		if minor := strings.TrimSpace(device.Minor); minor != "" && !strings.EqualFold(minor, "N/A") {
+			parsed, err := strconv.Atoi(minor)
+			if err != nil || parsed < 0 {
+				return nil, fmt.Errorf("parse ixsmi gpu %d minor number %q", i, device.Minor)
+			}
+			num = parsed
+		}
 		memTotal, err := parseMiBToBytes(device.Memory.Total)
 		if err != nil {
-			return nil, fmt.Errorf("parse ixsmi gpu %d total memory: %w", i, err)
+			return nil, fmt.Errorf("parse ixsmi gpu %d total memory: %w", num, err)
 		}
 		memUsed, err := parseMiBToBytes(device.Memory.Used)
 		if err != nil {
-			return nil, fmt.Errorf("parse ixsmi gpu %d used memory: %w", i, err)
+			return nil, fmt.Errorf("parse ixsmi gpu %d used memory: %w", num, err)
 		}
 		temp, err := parseTempC(device.Temp.GPUTemp)
 		if err != nil {
-			return nil, fmt.Errorf("parse ixsmi gpu %d temperature: %w", i, err)
+			return nil, fmt.Errorf("parse ixsmi gpu %d temperature: %w", num, err)
 		}
 		gpuUse, err := parsePercent(device.Util.GPUUtil)
 		if err != nil {
-			return nil, fmt.Errorf("parse ixsmi gpu %d utilization: %w", i, err)
+			return nil, fmt.Errorf("parse ixsmi gpu %d utilization: %w", num, err)
+		}
+		power, err := parsePowerW(device.PowerReadings.GPUPowerDraw)
+		if err != nil {
+			return nil, fmt.Errorf("parse ixsmi gpu %d power: %w", num, err)
 		}
 		var pciBus string
 		if device.PCI.BusID != "" {
@@ -184,39 +208,36 @@ func ParseIXSMI(data string) ([]gpu.GPUInfo, error) {
 			pciBus = strings.Join(parts, ":")
 		}
 		infos = append(infos, gpu.GPUInfo{
-			Num:                 i,
-			DeviceID:            device.ID,
-			SerialNumber:        device.Serial,
-			VRAMTotalMemory:     memTotal,
-			VRAMTotalUsedMemory: memUsed,
-			TemperatureEdge:     temp,
-			GPUUse:              gpuUse,
-			CardSeries:          device.Product,
-			CardModel:           device.Product,
-			CardVendor:          "Iluvatar",
-			PCIBus:              pciBus,
+			Num:                         num,
+			DeviceID:                    device.ID,
+			SerialNumber:                device.Serial,
+			VRAMTotalMemory:             memTotal,
+			VRAMTotalUsedMemory:         memUsed,
+			TemperatureEdge:             temp,
+			AverageGraphicsPackagePower: power,
+			GPUUse:                      gpuUse,
+			CardSeries:                  device.Product,
+			CardModel:                   device.Product,
+			CardVendor:                  "Iluvatar",
+			PCIBus:                      pciBus,
 		})
 	}
 	return infos, nil
 }
 
-func parseIXFloat(value string) (*float64, error) {
-	fields := strings.Fields(value)
-	if len(fields) == 0 {
+func parseIXFloat(value, expectedUnit string) (*float64, error) {
+	if strings.TrimSpace(value) == "" || strings.EqualFold(strings.TrimSpace(value), "N/A") {
 		return nil, nil
 	}
-	parsed, err := gpu.ParseFloat(fields[0])
-	if err != nil {
-		return nil, err
+	fields := strings.Fields(value)
+	if len(fields) != 2 || fields[1] != expectedUnit {
+		return nil, fmt.Errorf("invalid %s value %q", expectedUnit, value)
 	}
-	if parsed != nil && (math.IsNaN(*parsed) || math.IsInf(*parsed, 0)) {
-		return nil, fmt.Errorf("non-finite value %q", value)
-	}
-	return parsed, nil
+	return gpu.ParseFloat(fields[0])
 }
 
 func parseMiBToBytes(value string) (*uint64, error) {
-	parsed, err := parseIXFloat(value)
+	parsed, err := parseIXFloat(value, "MiB")
 	if err != nil || parsed == nil {
 		return nil, err
 	}
@@ -228,9 +249,13 @@ func parseMiBToBytes(value string) (*uint64, error) {
 }
 
 func parseTempC(value string) (*float64, error) {
-	return parseIXFloat(value)
+	return parseIXFloat(value, "C")
 }
 
 func parsePercent(value string) (*float64, error) {
-	return parseIXFloat(value)
+	return parseIXFloat(value, "%")
+}
+
+func parsePowerW(value string) (*float64, error) {
+	return parseIXFloat(value, "W")
 }

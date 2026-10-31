@@ -36,8 +36,8 @@ func TestParse(t *testing.T) {
 	assert.Equal(t, gpu.Uint64(0), gpu0.VRAMTotalUsedMemory)
 	assert.Equal(t, gpu.Float64(46.8), gpu0.TemperatureEdge)
 	assert.Equal(t, gpu.Float64(45.9), gpu0.TemperatureJunction)
-	assert.Equal(t, gpu.Float64(46.5), gpu0.TemperatureMemory)
-	assert.Equal(t, gpu.Float64(6.7), gpu0.AverageGraphicsPackagePower)
+	assert.Equal(t, gpu.Float64(46.55), gpu0.TemperatureMemory)
+	assert.Equal(t, gpu.Float64(6.73), gpu0.AverageGraphicsPackagePower)
 
 	gpu1 := infos[1]
 	assert.Equal(t, 0, gpu1.Num)
@@ -50,8 +50,8 @@ func TestParse(t *testing.T) {
 	assert.Equal(t, gpu.Float64(0), gpu1.GPUUse)
 	assert.Equal(t, gpu.Float64(44.9), gpu1.TemperatureEdge)
 	assert.Equal(t, gpu.Float64(41.5), gpu1.TemperatureJunction)
-	assert.Equal(t, gpu.Float64(40.9), gpu1.TemperatureMemory)
-	assert.Equal(t, gpu.Float64(6.6), gpu1.AverageGraphicsPackagePower)
+	assert.Equal(t, gpu.Float64(40.925), gpu1.TemperatureMemory)
+	assert.Equal(t, gpu.Float64(6.63), gpu1.AverageGraphicsPackagePower)
 }
 
 func TestParseEmpty(t *testing.T) {
@@ -75,6 +75,11 @@ func TestParseInvalidNumericValue(t *testing.T) {
 		"device0 detail infos\nAverage_Util : garbage 12 %\n",
 		"device0 detail infos\nDDR_Memory_Total : junk 100 MB\n",
 		"device0 detail infos\nCore0 : 40 C trailing\n",
+		"device0 detail infos\nCore0 : 46.8 W\n",
+		"device0 detail infos\nAverage_Util : 10 C\n",
+		"device0 detail infos\nBoard_Power : 6.73 C\n",
+		"device0 detail infos\nDDR0 : 40 W\n",
+		"unrecognized hm_smi output",
 	} {
 		_, err := New().parse([]byte(input))
 		assert.Error(t, err, input)

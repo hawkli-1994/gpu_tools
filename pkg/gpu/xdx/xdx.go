@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -46,12 +47,25 @@ func (x *xdxSMICommand) parse(output []byte) ([]gpu.GPUInfo, error) {
 	result := make([]gpu.GPUInfo, 0)
 	var current *gpu.GPUInfo
 	var currentSection string
+	gpuCount := -1
 	kvRegex := regexp.MustCompile(`^\s*(.+?)\s*:\s+(.+)$`)
 	gpuRegex := regexp.MustCompile(`^\s*GPU\s+(\d+)\s*$`)
 
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.Contains(line, "======") {
+			continue
+		}
+		if strings.Contains(line, "Attached GPUs") {
+			_, value, ok := strings.Cut(line, ":")
+			if !ok {
+				return nil, fmt.Errorf("parse xdxsmi attached GPU count %q", line)
+			}
+			count, err := strconv.Atoi(strings.TrimSpace(value))
+			if err != nil || count < 0 {
+				return nil, fmt.Errorf("parse xdxsmi attached GPU count %q", value)
+			}
+			gpuCount = count
 			continue
 		}
 		if matches := gpuRegex.FindStringSubmatch(line); matches != nil {
@@ -107,7 +121,7 @@ func (x *xdxSMICommand) parse(output []byte) ([]gpu.GPUInfo, error) {
 			case "Product Architecture":
 				current.CardSeries = value
 			case "Temperature":
-				current.TemperatureEdge, err = parseXDXFloat(value)
+				current.TemperatureEdge, err = parseXDXFloat(value, "°C", "C")
 			}
 		} else {
 			switch currentSection {
@@ -121,7 +135,7 @@ func (x *xdxSMICommand) parse(output []byte) ([]gpu.GPUInfo, error) {
 				}
 			case "power":
 				if key == "Pwr Total" {
-					current.AverageGraphicsPackagePower, err = parseXDXFloat(value)
+					current.AverageGraphicsPackagePower, err = parseXDXFloat(value, "W")
 				}
 			}
 		}
@@ -135,22 +149,24 @@ func (x *xdxSMICommand) parse(output []byte) ([]gpu.GPUInfo, error) {
 	if current != nil {
 		result = append(result, *current)
 	}
+	if gpuCount >= 0 && len(result) != gpuCount {
+		return nil, fmt.Errorf("parse xdxsmi output: attached GPU count %d does not match %d parsed devices", gpuCount, len(result))
+	}
+	if len(result) == 0 && gpuCount < 0 && strings.TrimSpace(string(output)) != "" {
+		return nil, fmt.Errorf("parse xdxsmi output: no GPU devices found")
+	}
 	return result, nil
 }
 
-func parseXDXFloat(value string) (*float64, error) {
-	fields := strings.Fields(value)
-	if len(fields) == 0 {
+func parseXDXFloat(value string, expectedUnits ...string) (*float64, error) {
+	if strings.TrimSpace(value) == "" || strings.EqualFold(strings.TrimSpace(value), "N/A") {
 		return nil, nil
 	}
-	parsed, err := gpu.ParseFloat(fields[0])
-	if err != nil {
-		return nil, err
+	fields := strings.Fields(value)
+	if len(fields) != 2 || !slices.Contains(expectedUnits, fields[1]) {
+		return nil, fmt.Errorf("invalid numeric value %q", value)
 	}
-	if parsed != nil && (math.IsNaN(*parsed) || math.IsInf(*parsed, 0)) {
-		return nil, fmt.Errorf("non-finite value %q", value)
-	}
-	return parsed, nil
+	return gpu.ParseFloat(fields[0])
 }
 
 func parseXDXMiB(value string) (*uint64, error) {
@@ -158,7 +174,7 @@ func parseXDXMiB(value string) (*uint64, error) {
 	if len(fields) == 0 || strings.EqualFold(strings.TrimSpace(value), "N/A") {
 		return nil, nil
 	}
-	if len(fields) < 2 || fields[1] != "MiB" {
+	if len(fields) != 2 || fields[1] != "MiB" {
 		return nil, fmt.Errorf("invalid MiB value %q", value)
 	}
 	size, err := gpu.ParseFloat(fields[0])

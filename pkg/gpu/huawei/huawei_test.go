@@ -50,8 +50,45 @@ func TestExtractMemoryUsage(t *testing.T) {
 | NPU     Chip                  | Process id      | Process name             | Process memory(MB)        |
 | 2       0                     | 36315           | foo / bar                | 686                       |`)
 	assert.Equal(t, map[string]map[string]string{
-		"5": {"0": "12294"},
+		"5": {"0": "0"},
 	}, extractMemoryUsage(compact))
+}
+
+func TestExtractOverviewHBMDeviceIDs(t *testing.T) {
+	output := []byte(`| 0       910B1                 | OK              | 88.4         46                0 / 0 |
+| 0       0                     | 0000:C1:00.0    | 0            0 / 0             4175 / 65536 |
+| 1       910B1                 | OK              | 92.1         47                0 / 0 |
+| 0       1                     | 0000:01:00.0    | 0            0 / 0             4176 / 65536 |`)
+	memory, devices := extractOverview(output)
+	assert.Equal(t, map[string]map[string]string{
+		"0": {"0": "4175"},
+		"1": {"0": "4176"},
+	}, memory)
+	assert.Equal(t, map[string]map[string]string{
+		"0": {"0": "0"},
+		"1": {"0": "1"},
+	}, devices)
+}
+
+func TestBuildGPUInfoListHBM(t *testing.T) {
+	usages := map[string]map[string]string{
+		"0": {
+			"DDR Capacity(MB)": "0", "DDR Usage Rate(%)": "0",
+			"HBM Capacity(MB)": "65536", "HBM Usage Rate(%)": "4",
+			"Memory Usage(MB)": "4175",
+		},
+	}
+	infos, _, err := buildGPUInfoListWithDeviceIDs("0", nil, nil, usages, nil, nil, map[string]string{"0": "8"}, 0)
+	require.NoError(t, err)
+	require.Len(t, infos, 1)
+	assert.Equal(t, "8", infos[0].DeviceID)
+	assert.Equal(t, gpu.Uint64(65536*1024*1024), infos[0].VRAMTotalMemory)
+	assert.Equal(t, gpu.Uint64(4175*1024*1024), infos[0].VRAMTotalUsedMemory)
+
+	delete(usages["0"], "Memory Usage(MB)")
+	infos, _, err = buildGPUInfoListWithDeviceIDs("0", nil, nil, usages, nil, nil, nil, 0)
+	require.NoError(t, err)
+	assert.Equal(t, gpu.Uint64(2748779069), infos[0].VRAMTotalUsedMemory)
 }
 
 func TestParseChipSectionsForward(t *testing.T) {
@@ -425,4 +462,24 @@ func TestIntegrationSingleChipFromFixtures(t *testing.T) {
 	assert.Equal(t, gpu.Float64(65.5), infos[0].AverageGraphicsPackagePower)
 	assert.Equal(t, gpu.Uint64(23068672000), infos[0].VRAMTotalMemory)
 	assert.Equal(t, gpu.Uint64(2306867200), infos[0].VRAMTotalUsedMemory)
+}
+
+func TestLoadHandlesMissingUsageSections(t *testing.T) {
+	dir := t.TempDir()
+	script := `#!/bin/sh
+if [ "$*" = "info" ]; then
+	echo '| 0 910B | OK | 50 40 0 / 0 |'
+	echo '| 0 0 | 0000:01:00.0 | 0 1255 / 65536 |'
+fi
+`
+	path := filepath.Join(dir, "npu-smi")
+	require.NoError(t, os.WriteFile(path, []byte(script), 0o755))
+	t.Setenv("PATH", dir)
+
+	infos, err := New().Load(context.Background())
+	require.NoError(t, err)
+	require.Len(t, infos, 1)
+	assert.Equal(t, "0", infos[0].DeviceID)
+	assert.Equal(t, gpu.Uint64(1255*1024*1024), infos[0].VRAMTotalUsedMemory)
+	assert.Nil(t, infos[0].VRAMTotalMemory)
 }

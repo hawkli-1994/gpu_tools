@@ -73,6 +73,24 @@ func TestEnflameParseInvalidNumericValue(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestEnflameParseDeviceNumberAndUnits(t *testing.T) {
+	infos, err := New().parse([]byte("DEV ID 4\nTemperature Info\nGCU Temp : 39 ℃\nDevice Usage Info\nGCU Usage : 12.5 %\n"))
+	require.NoError(t, err)
+	require.Len(t, infos, 1)
+	assert.Equal(t, 4, infos[0].Num)
+	assert.Equal(t, gpu.Float64(39), infos[0].TemperatureEdge)
+	assert.Equal(t, gpu.Float64(12.5), infos[0].GPUUse)
+
+	for _, input := range []string{
+		"DEV ID 0\nTemperature Info\nGCU Temp : 39 %\n",
+		"DEV ID 0\nDevice Usage Info\nGCU Usage : 10 C\n",
+		"DEV ID 0\nDevice Mem Info\nMem Size : 1 GiB trailing\n",
+	} {
+		_, err := New().parse([]byte(input))
+		assert.Error(t, err, input)
+	}
+}
+
 func TestLoadDoesNotRetryCommandExitFailure(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "efsmi")

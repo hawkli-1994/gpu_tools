@@ -55,6 +55,9 @@ func (n *nvidiaSMICommand) parse(output []byte) ([]gpu.GPUInfo, error) {
 		if err != nil {
 			return nil, fmt.Errorf("parse nvidia-smi GPU index %q: %w", row[0], err)
 		}
+		if index < 0 {
+			return nil, fmt.Errorf("parse nvidia-smi GPU index %q: must be non-negative", row[0])
+		}
 		totalMemory, err := parseMemory(row[2])
 		if err != nil {
 			return nil, fmt.Errorf("parse nvidia-smi GPU %d total memory: %w", index, err)
@@ -107,8 +110,11 @@ func parseMemory(value string) (*uint64, error) {
 
 func parseMetric(value string) (*float64, error) {
 	fields := strings.Fields(value)
-	if len(fields) == 0 {
+	if len(fields) == 0 || len(fields) == 1 && strings.EqualFold(fields[0], "N/A") {
 		return nil, nil
+	}
+	if len(fields) != 2 || fields[1] != "%" || strings.EqualFold(fields[0], "N/A") {
+		return nil, fmt.Errorf("expected percentage or N/A, got %q", value)
 	}
 	return gpu.ParseFloat(fields[0])
 }

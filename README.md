@@ -215,7 +215,7 @@ The returned `GPUDriverInfo` includes the NVIDIA SMI path and the client, driver
 | --- | --- | --- |
 | NVIDIA | `pkg/gpu/nvidia` | `nvidia-smi` |
 | AMD | `pkg/gpu/amd` | `amd-smi`, then `rocm-smi` if unavailable |
-| AMD RISC-V | `pkg/gpu/amd_riscv` | AMD RISC-V monitor library and sysfs |
+| AMD RISC-V | `pkg/gpu/amd_riscv` | `sensors -j` and sysfs |
 | CPU | `pkg/gpu/cpu` | Placeholder loader returning no GPU devices |
 | Denglin | `pkg/gpu/dl` | `dlsmi` |
 | Enflame | `pkg/gpu/enflame` | `efsmi` |
@@ -237,9 +237,11 @@ go test ./...
 go test -race ./...
 go build ./...
 go vet ./...
+# Run each vendor's fuzz target for a bounded smoke test, for example:
+go test -run='^$' -fuzz=FuzzParseNVIDIA -fuzztime=10s ./pkg/gpu/nvidia
 ```
 
-Vendor parser tests use offline fixtures in co-located `testdata` directories, so the standard test suite does not require GPU hardware.
+Vendor parser tests use offline fixtures in co-located `testdata` directories, so the standard test suite does not require GPU hardware. Fuzz targets additionally check that arbitrary input cannot panic a parser or produce negative device numbers and non-finite metrics.
 
 ### Add a vendor
 

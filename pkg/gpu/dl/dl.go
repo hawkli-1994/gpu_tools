@@ -65,11 +65,14 @@ func (d *dlsmiCommand) Vendor() string {
 }
 
 type dlsmiLog struct {
-	GPUs []dlsmiGPU `xml:"gpu"`
+	XMLName      xml.Name   `xml:"dlsmi_log"`
+	AttachedGPUs *int       `xml:"attached_gpus"`
+	GPUs         []dlsmiGPU `xml:"gpu"`
 }
 
 type dlsmiGPU struct {
 	ID                  string             `xml:"id,attr"`
+	MinorNumber         string             `xml:"minor_number"`
 	ProductName         string             `xml:"product_name"`
 	ProductBrand        string             `xml:"product_brand"`
 	ProductArchitecture string             `xml:"product_architecture"`
@@ -120,11 +123,22 @@ func parseDLSMIOutput(output []byte) ([]gpu.GPUInfo, error) {
 	if err := xml.Unmarshal(output, &log); err != nil {
 		return nil, fmt.Errorf("parse dlsmi output: %w", err)
 	}
+	if log.AttachedGPUs != nil && (*log.AttachedGPUs < 0 || *log.AttachedGPUs != len(log.GPUs)) {
+		return nil, fmt.Errorf("parse dlsmi output: attached GPU count %d does not match %d parsed devices", *log.AttachedGPUs, len(log.GPUs))
+	}
 
 	infos := make([]gpu.GPUInfo, 0, len(log.GPUs))
 	for idx, node := range log.GPUs {
+		num := idx
+		if minor := strings.TrimSpace(node.MinorNumber); minor != "" && !strings.EqualFold(minor, "N/A") {
+			parsed, err := strconv.Atoi(minor)
+			if err != nil || parsed < 0 {
+				return nil, fmt.Errorf("parse dlsmi gpu %d minor number %q", idx, node.MinorNumber)
+			}
+			num = parsed
+		}
 		info := gpu.GPUInfo{
-			Num:          idx,
+			Num:          num,
 			DeviceID:     strings.TrimSpace(node.PCI.DeviceID),
 			DeviceRev:    strings.TrimSpace(node.FirmwareVersion),
 			SerialNumber: strings.TrimSpace(node.SerialNumber),
@@ -140,22 +154,22 @@ func parseDLSMIOutput(output []byte) ([]gpu.GPUInfo, error) {
 
 		var err error
 		if info.VRAMTotalMemory, err = convertSizeToBytes(node.MemoryUsage.Total); err != nil {
-			return nil, fmt.Errorf("parse dlsmi gpu %d total memory: %w", idx, err)
+			return nil, fmt.Errorf("parse dlsmi gpu %d total memory: %w", num, err)
 		}
 		if info.VRAMTotalUsedMemory, err = convertSizeToBytes(node.MemoryUsage.Used); err != nil {
-			return nil, fmt.Errorf("parse dlsmi gpu %d used memory: %w", idx, err)
+			return nil, fmt.Errorf("parse dlsmi gpu %d used memory: %w", num, err)
 		}
-		if info.GPUUse, err = parseNumericField(node.Utilization.GPU); err != nil {
-			return nil, fmt.Errorf("parse dlsmi gpu %d utilization: %w", idx, err)
+		if info.GPUUse, err = parseNumericField(node.Utilization.GPU, "%"); err != nil {
+			return nil, fmt.Errorf("parse dlsmi gpu %d utilization: %w", num, err)
 		}
-		if info.TemperatureEdge, err = parseNumericField(node.Temperature.GPUCurrent); err != nil {
-			return nil, fmt.Errorf("parse dlsmi gpu %d current temperature: %w", idx, err)
+		if info.TemperatureEdge, err = parseNumericField(node.Temperature.GPUCurrent, "C"); err != nil {
+			return nil, fmt.Errorf("parse dlsmi gpu %d current temperature: %w", num, err)
 		}
-		if info.TemperatureMemory, err = parseNumericField(node.Temperature.MemoryCurrent); err != nil {
-			return nil, fmt.Errorf("parse dlsmi gpu %d memory temperature: %w", idx, err)
+		if info.TemperatureMemory, err = parseNumericField(node.Temperature.MemoryCurrent, "C"); err != nil {
+			return nil, fmt.Errorf("parse dlsmi gpu %d memory temperature: %w", num, err)
 		}
-		if info.AverageGraphicsPackagePower, err = parseNumericField(node.PowerReadings.PowerDraw); err != nil {
-			return nil, fmt.Errorf("parse dlsmi gpu %d power draw: %w", idx, err)
+		if info.AverageGraphicsPackagePower, err = parseNumericField(node.PowerReadings.PowerDraw, "W"); err != nil {
+			return nil, fmt.Errorf("parse dlsmi gpu %d power draw: %w", num, err)
 		}
 		infos = append(infos, info)
 	}
@@ -176,17 +190,17 @@ func resolveBusID(g dlsmiGPU) string {
 	return strings.TrimSpace(g.ID)
 }
 
-func parseNumericField(value string) (*float64, error) {
-	fields := strings.Fields(value)
-	if len(fields) == 0 {
+func parseNumericField(value, expectedUnit string) (*float64, error) {
+	if strings.TrimSpace(value) == "" || strings.EqualFold(strings.TrimSpace(value), "N/A") {
 		return nil, nil
 	}
-	parsed, err := gpu.ParseFloat(strings.TrimPrefix(fields[0], "+"))
+	fields := strings.Fields(value)
+	if len(fields) != 2 || fields[1] != expectedUnit {
+		return nil, fmt.Errorf("parse %q: expected unit %s", value, expectedUnit)
+	}
+	parsed, err := gpu.ParseFloat(fields[0])
 	if err != nil {
 		return nil, fmt.Errorf("parse %q: %w", value, err)
-	}
-	if parsed != nil && (math.IsNaN(*parsed) || math.IsInf(*parsed, 0)) {
-		return nil, fmt.Errorf("parse %q: non-finite value", value)
 	}
 	return parsed, nil
 }
@@ -195,6 +209,9 @@ func convertSizeToBytes(value string) (*uint64, error) {
 	fields := strings.Fields(value)
 	if len(fields) == 0 || strings.EqualFold(strings.TrimSpace(value), "N/A") {
 		return nil, nil
+	}
+	if len(fields) > 2 {
+		return nil, fmt.Errorf("parse %q: unexpected trailing data", value)
 	}
 	num, err := strconv.ParseFloat(strings.TrimPrefix(fields[0], "+"), 64)
 	if err != nil {

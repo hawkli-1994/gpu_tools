@@ -26,8 +26,15 @@ func NewRegistry(loaders ...Loader) (*Registry, error) {
 }
 
 func (r *Registry) Register(loader Loader) error {
-	if loader == nil || (reflect.ValueOf(loader).Kind() == reflect.Pointer && reflect.ValueOf(loader).IsNil()) {
+	if loader == nil {
 		return errors.New("gpu loader is nil")
+	}
+	value := reflect.ValueOf(loader)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		if value.IsNil() {
+			return errors.New("gpu loader is nil")
+		}
 	}
 	vendor := loader.Vendor()
 	if vendor == "" {

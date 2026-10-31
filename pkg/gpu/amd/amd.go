@@ -85,8 +85,8 @@ func (r *rocmSMICommand) parse(output []byte) ([]gpu.GPUInfo, error) {
 	infos := make([]gpu.GPUInfo, 0, len(jsonData))
 	for cardNum, data := range jsonData {
 		num, err := strconv.Atoi(strings.TrimPrefix(cardNum, "card"))
-		if err != nil {
-			return nil, fmt.Errorf("parse rocm-smi GPU index %q: %w", cardNum, err)
+		if err != nil || num < 0 {
+			return nil, fmt.Errorf("parse rocm-smi GPU index %q: invalid index", cardNum)
 		}
 		info := gpu.GPUInfo{
 			Num:          num,
@@ -150,6 +150,11 @@ func commandError(vendor, op, command string, ctx context.Context, err error) er
 	}
 	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
 		return unavailable(vendor, command, err)
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		if message := strings.TrimSpace(string(exitErr.Stderr)); message != "" {
+			err = fmt.Errorf("%w: %s", err, message)
+		}
 	}
 	return &gpu.OpError{Vendor: vendor, Op: op, Command: command, Err: err}
 }

@@ -111,3 +111,31 @@ func TestParseIXSMIInvalidNumericValue(t *testing.T) {
 	_, err := ParseIXSMI(`<ixsmi_log><gpu id="0"><temperature><gpu_temp>invalid C</gpu_temp></temperature></gpu></ixsmi_log>`)
 	assert.Error(t, err)
 }
+
+func TestParseIXSMIDeviceIdentityPowerAndUnits(t *testing.T) {
+	infos, err := ParseIXSMI(`<ixsmi_log><attached_gpus>1</attached_gpus><gpu id="gpu7"><minor_number>7</minor_number><power_readings><gpu_power_draw>37.25 W</gpu_power_draw></power_readings></gpu></ixsmi_log>`)
+	require.NoError(t, err)
+	require.Len(t, infos, 1)
+	assert.Equal(t, 7, infos[0].Num)
+	assert.Equal(t, gpu.Float64(37.25), infos[0].AverageGraphicsPackagePower)
+
+	data, err := os.ReadFile(filepath.Join("testdata", "ixsmi.xml"))
+	require.NoError(t, err)
+	infos, err = ParseIXSMI(string(data))
+	require.NoError(t, err)
+	assert.Equal(t, gpu.Float64(37), infos[0].AverageGraphicsPackagePower)
+	assert.Equal(t, gpu.Float64(39), infos[1].AverageGraphicsPackagePower)
+}
+
+func TestParseIXSMIRejectsInvalidUnitsAndDeviceCount(t *testing.T) {
+	for _, input := range []string{
+		`<ixsmi_log><gpu id="0"><memory_usage><total>1 GB</total></memory_usage></gpu></ixsmi_log>`,
+		`<ixsmi_log><gpu id="0"><temperature><gpu_temp>53 W</gpu_temp></temperature></gpu></ixsmi_log>`,
+		`<ixsmi_log><gpu id="0"><utilization><gpu_util>10 C</gpu_util></utilization></gpu></ixsmi_log>`,
+		`<ixsmi_log><gpu id="0"><power_readings><gpu_power_draw>10 C</gpu_power_draw></power_readings></gpu></ixsmi_log>`,
+		`<ixsmi_log><attached_gpus>2</attached_gpus><gpu id="0"/></ixsmi_log>`,
+	} {
+		_, err := ParseIXSMI(input)
+		assert.Error(t, err, input)
+	}
+}

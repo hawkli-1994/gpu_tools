@@ -19,7 +19,7 @@ import (
 var (
 	hmDeviceRegex = regexp.MustCompile(`^\s*device(\d+)\s+detail\s+infos\s*$`)
 	hmKVRegex     = regexp.MustCompile(`^\s*([A-Za-z0-9_]+)\s*:\s*(.*)$`)
-	hmFloatRegex  = regexp.MustCompile(`^\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*(?i:(?:%|C|W))?\s*$`)
+	hmFloatRegex  = regexp.MustCompile(`^\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*(?i:(%|C|W))\s*$`)
 	hmMBRegex     = regexp.MustCompile(`^\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*(?i:MB)\s*$`)
 )
 
@@ -95,6 +95,9 @@ func (h *houmoaiSMICommand) parse(output []byte) ([]gpu.GPUInfo, error) {
 		}
 		result = append(result, info)
 	}
+	if len(result) == 0 && strings.TrimSpace(string(output)) != "" {
+		return nil, fmt.Errorf("parse hm_smi output: no GPU devices found")
+	}
 	return result, nil
 }
 
@@ -127,19 +130,19 @@ func (h *houmoaiSMICommand) buildGPUInfo(num int, fields map[string]string) (gpu
 	if err != nil {
 		return gpu.GPUInfo{}, fmt.Errorf("parse hm_smi gpu %d DDR temperature: %w", num, err)
 	}
-	gpuUse, err := firstFloat(fields["Average_Util"])
+	gpuUse, err := firstFloat(fields["Average_Util"], "%")
 	if err != nil {
 		return gpu.GPUInfo{}, fmt.Errorf("parse hm_smi gpu %d Average_Util: %w", num, err)
 	}
-	edge, err := firstFloat(fields["Core0"])
+	edge, err := firstFloat(fields["Core0"], "C")
 	if err != nil {
 		return gpu.GPUInfo{}, fmt.Errorf("parse hm_smi gpu %d Core0: %w", num, err)
 	}
-	junction, err := firstFloat(fields["Core1"])
+	junction, err := firstFloat(fields["Core1"], "C")
 	if err != nil {
 		return gpu.GPUInfo{}, fmt.Errorf("parse hm_smi gpu %d Core1: %w", num, err)
 	}
-	power, err := firstFloat(fields["Board_Power"])
+	power, err := firstFloat(fields["Board_Power"], "W")
 	if err != nil {
 		return gpu.GPUInfo{}, fmt.Errorf("parse hm_smi gpu %d Board_Power: %w", num, err)
 	}
@@ -192,19 +195,15 @@ func mbToBytes(mb *float64) (*uint64, error) {
 	return gpu.Uint64(uint64(bytes + 0.5)), nil
 }
 
-func firstFloat(value string) (*float64, error) {
+func firstFloat(value, expectedUnit string) (*float64, error) {
 	if strings.TrimSpace(value) == "" || strings.EqualFold(strings.TrimSpace(value), "N/A") {
 		return nil, nil
 	}
 	matches := hmFloatRegex.FindStringSubmatch(value)
-	if len(matches) == 0 {
-		return nil, fmt.Errorf("invalid numeric value %q", value)
+	if len(matches) != 3 || !strings.EqualFold(matches[2], expectedUnit) {
+		return nil, fmt.Errorf("invalid %s value %q", expectedUnit, value)
 	}
-	parsed, err := gpu.ParseFloat(matches[1])
-	if err != nil {
-		return nil, err
-	}
-	return gpu.ParseFloat(strconv.FormatFloat(*parsed, 'f', 1, 64))
+	return gpu.ParseFloat(matches[1])
 }
 
 func averageDDRTemp(fields map[string]string) (*float64, error) {
@@ -212,7 +211,7 @@ func averageDDRTemp(fields map[string]string) (*float64, error) {
 	var sum float64
 	var count int
 	for _, key := range keys {
-		value, err := firstFloat(fields[key])
+		value, err := firstFloat(fields[key], "C")
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", key, err)
 		}
@@ -224,5 +223,9 @@ func averageDDRTemp(fields map[string]string) (*float64, error) {
 	if count == 0 {
 		return nil, nil
 	}
-	return gpu.ParseFloat(strconv.FormatFloat(sum/float64(count), 'f', 1, 64))
+	average := sum / float64(count)
+	if math.IsNaN(average) || math.IsInf(average, 0) {
+		return nil, fmt.Errorf("DDR temperature average is not finite")
+	}
+	return gpu.Float64(average), nil
 }

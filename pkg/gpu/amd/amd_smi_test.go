@@ -1,14 +1,98 @@
 package amd
 
 import (
+	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/hawkli-1994/gpu_tools/pkg/gpu"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestAMDSMILoadUsesExpectedArguments(t *testing.T) {
+	tempDir := t.TempDir()
+	testdataDir, err := filepath.Abs("testdata")
+	require.NoError(t, err)
+	commandPath := filepath.Join(tempDir, "amd-smi")
+	script := `#!/bin/sh
+printf '%s\n' "$@" > "$AMD_SMI_ARGS_DIR/$1"
+case "$1" in
+static) /bin/cat "$AMD_SMI_TESTDATA/amd_smi_static.json" ;;
+metric) /bin/cat "$AMD_SMI_TESTDATA/amd_smi_metric.json" ;;
+esac
+`
+	require.NoError(t, os.WriteFile(commandPath, []byte(script), 0o755))
+	t.Setenv("PATH", tempDir)
+	t.Setenv("AMD_SMI_ARGS_DIR", tempDir)
+	t.Setenv("AMD_SMI_TESTDATA", testdataDir)
+
+	infos, err := (&amdSMICommand{}).Load(context.Background())
+	require.NoError(t, err)
+	require.Len(t, infos, 2)
+
+	for _, test := range []struct {
+		subcommand string
+		expected   []string
+	}{
+		{subcommand: "static", expected: []string{"static", "-a", "-b", "-v", "-B", "--json"}},
+		{subcommand: "metric", expected: []string{"metric", "-m", "-u", "-p", "-t", "--json"}},
+	} {
+		output, err := os.ReadFile(filepath.Join(tempDir, test.subcommand))
+		require.NoError(t, err)
+		assert.Equal(t, test.expected, strings.Split(strings.TrimSpace(string(output)), "\n"))
+	}
+}
+
+func TestAMDSMILoadErrorsIncludeStderr(t *testing.T) {
+	for _, subcommand := range []string{"static", "metric"} {
+		t.Run(subcommand, func(t *testing.T) {
+			tempDir := t.TempDir()
+			testdataDir, err := filepath.Abs("testdata")
+			require.NoError(t, err)
+			commandPath := filepath.Join(tempDir, "amd-smi")
+			script := `#!/bin/sh
+if [ "$1" = "$AMD_SMI_FAIL" ]; then
+	printf '%s failed\n' "$1" >&2
+	exit 1
+fi
+/bin/cat "$AMD_SMI_TESTDATA/amd_smi_$1.json"
+`
+			require.NoError(t, os.WriteFile(commandPath, []byte(script), 0o755))
+			t.Setenv("PATH", tempDir)
+			t.Setenv("AMD_SMI_TESTDATA", testdataDir)
+			t.Setenv("AMD_SMI_FAIL", subcommand)
+
+			_, err = (&amdSMICommand{}).Load(context.Background())
+			assert.ErrorContains(t, err, subcommand+" failed")
+			var opErr *gpu.OpError
+			require.ErrorAs(t, err, &opErr)
+			assert.Equal(t, subcommand, opErr.Op)
+		})
+	}
+}
+
+func TestAMDSMILoadUnavailable(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	_, err := (&amdSMICommand{}).Load(context.Background())
+	assert.ErrorIs(t, err, gpu.ErrUnavailable)
+}
+
+func TestAMDSMILoadContextCanceled(t *testing.T) {
+	tempDir := t.TempDir()
+	commandPath := filepath.Join(tempDir, "amd-smi")
+	require.NoError(t, os.WriteFile(commandPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", tempDir)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := (&amdSMICommand{}).Load(ctx)
+	assert.ErrorIs(t, err, context.Canceled)
+}
 
 func TestAMDSMIParse(t *testing.T) {
 	staticOutput, err := os.ReadFile("testdata/amd_smi_static.json")
@@ -143,4 +227,15 @@ func TestSMIValueBytesRejectsUnknownUnit(t *testing.T) {
 	value := smiValue{Value: []byte("1"), Unit: "blocks"}
 	_, err := value.bytes()
 	assert.ErrorContains(t, err, "unsupported memory unit")
+}
+
+func TestSMIValueBytesRejectsInvalidQuantities(t *testing.T) {
+	for _, text := range []string{"NaN", "Inf", "-Inf", "18446744073709551616"} {
+		t.Run(text, func(t *testing.T) {
+			value := smiValue{Value: []byte(strconv.Quote(text)), Unit: "B"}
+			parsed, err := value.bytes()
+			assert.Nil(t, parsed)
+			assert.ErrorContains(t, err, "invalid byte quantity")
+		})
+	}
 }

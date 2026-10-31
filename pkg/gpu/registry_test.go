@@ -22,6 +22,11 @@ func (l *testLoader) Vendor() string {
 	return l.vendor
 }
 
+type funcLoader func()
+
+func (funcLoader) Load(context.Context) ([]GPUInfo, error) { return nil, nil }
+func (funcLoader) Vendor() string                          { return "func" }
+
 func TestRegistry(t *testing.T) {
 	first := &testLoader{vendor: "B"}
 	second := &testLoader{vendor: "A"}
@@ -41,6 +46,8 @@ func TestRegistry(t *testing.T) {
 	assert.Error(t, registry.Register(nil))
 	var nilLoader *testLoader
 	assert.Error(t, registry.Register(nilLoader))
+	var nilFunc funcLoader
+	assert.Error(t, registry.Register(nilFunc))
 	assert.Error(t, registry.Register(&testLoader{}))
 }
 

@@ -62,6 +62,24 @@ func TestParseDLSMIOutputInvalidNumericValue(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestParseDLSMIOutputDeviceNumberUnitsAndCount(t *testing.T) {
+	infos, err := parseDLSMIOutput([]byte(`<dlsmi_log><attached_gpus>1</attached_gpus><gpu id="gpu7"><minor_number>7</minor_number></gpu></dlsmi_log>`))
+	require.NoError(t, err)
+	require.Len(t, infos, 1)
+	assert.Equal(t, 7, infos[0].Num)
+
+	for _, input := range []string{
+		`<dlsmi_log><gpu id="0"><utilization><gpu>10 C</gpu></utilization></gpu></dlsmi_log>`,
+		`<dlsmi_log><gpu id="0"><temperature><gpu_current_temp>53 W</gpu_current_temp></temperature></gpu></dlsmi_log>`,
+		`<dlsmi_log><gpu id="0"><power_readings><power_draw>10 C</power_draw></power_readings></gpu></dlsmi_log>`,
+		`<dlsmi_log><gpu id="0"><memory_usage><total>1 MiB trailing</total></memory_usage></gpu></dlsmi_log>`,
+		`<dlsmi_log><attached_gpus>2</attached_gpus><gpu id="0"/></dlsmi_log>`,
+	} {
+		_, err := parseDLSMIOutput([]byte(input))
+		assert.Error(t, err, input)
+	}
+}
+
 func TestLoadDoesNotRetryCommandExitFailure(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "dlsmi")

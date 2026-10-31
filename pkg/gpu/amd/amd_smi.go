@@ -170,6 +170,9 @@ func (a *amdSMICommand) parse(staticOutput, metricOutput []byte) ([]gpu.GPUInfo,
 
 	infos := make(map[int]gpu.GPUInfo, len(staticData.GPUData))
 	for _, data := range staticData.GPUData {
+		if data.GPU < 0 {
+			return nil, fmt.Errorf("parse amd-smi GPU index %d: invalid index", data.GPU)
+		}
 		vendor := data.Board.Manufacturer
 		if vendor == "" || vendor == "N/A" {
 			vendor = data.ASIC.VendorName
@@ -192,6 +195,9 @@ func (a *amdSMICommand) parse(staticOutput, metricOutput []byte) ([]gpu.GPUInfo,
 		}
 	}
 	for _, data := range metricData.GPUData {
+		if data.GPU < 0 {
+			return nil, fmt.Errorf("parse amd-smi GPU index %d: invalid index", data.GPU)
+		}
 		info := infos[data.GPU]
 		info.Num = data.GPU
 		var err error
@@ -279,7 +285,7 @@ func (v smiValue) bytes() (*uint64, error) {
 		return nil, err
 	}
 	bytes := value * multiplier
-	if bytes < 0 || bytes > math.MaxUint64 || math.Trunc(bytes) != bytes {
+	if math.IsNaN(bytes) || math.IsInf(bytes, 0) || bytes < 0 || bytes >= math.Exp2(64) || math.Trunc(bytes) != bytes {
 		return nil, fmt.Errorf("invalid byte quantity %q %s", text, v.Unit)
 	}
 	return gpu.Uint64(uint64(bytes)), nil

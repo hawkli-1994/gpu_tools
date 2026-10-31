@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/hawkli-1994/gpu_tools/pkg/gpu"
@@ -59,9 +61,14 @@ func (e *enflameSMICommand) parse(output []byte) ([]gpu.GPUInfo, error) {
 			if current != nil {
 				result = append(result, *current)
 			}
+			deviceID := strings.TrimSpace(line[len("DEV ID"):])
+			num, err := strconv.Atoi(deviceID)
+			if err != nil || num < 0 {
+				return nil, fmt.Errorf("parse efsmi device ID %q", deviceID)
+			}
 			current = &gpu.GPUInfo{
-				Num:        len(result),
-				DeviceID:   strings.TrimSpace(line[len("DEV ID"):]),
+				Num:        num,
+				DeviceID:   deviceID,
 				CardVendor: "Enflame",
 				CardModel:  "Enflame GCU",
 			}
@@ -112,11 +119,11 @@ func (e *enflameSMICommand) parse(output []byte) ([]gpu.GPUInfo, error) {
 			}
 		case "temperature":
 			if strings.Contains(line, "GCU Temp") {
-				current.TemperatureEdge, err = parseEnflameFloat(value)
+				current.TemperatureEdge, err = parseEnflameFloat(value, "C", "℃", "°C")
 			}
 		case "usage":
 			if strings.Contains(line, "GCU Usage") {
-				current.GPUUse, err = parseEnflameFloat(value)
+				current.GPUUse, err = parseEnflameFloat(value, "%")
 			}
 		case "pcie":
 			switch {
@@ -143,19 +150,15 @@ func (e *enflameSMICommand) parse(output []byte) ([]gpu.GPUInfo, error) {
 	return result, nil
 }
 
-func parseEnflameFloat(value string) (*float64, error) {
-	fields := strings.Fields(value)
-	if len(fields) == 0 {
+func parseEnflameFloat(value string, expectedUnits ...string) (*float64, error) {
+	if strings.TrimSpace(value) == "" || strings.EqualFold(strings.TrimSpace(value), "N/A") {
 		return nil, nil
 	}
-	parsed, err := gpu.ParseFloat(fields[0])
-	if err != nil {
-		return nil, err
+	fields := strings.Fields(value)
+	if len(fields) != 2 || !slices.Contains(expectedUnits, fields[1]) {
+		return nil, fmt.Errorf("invalid numeric value %q", value)
 	}
-	if parsed != nil && (math.IsNaN(*parsed) || math.IsInf(*parsed, 0)) {
-		return nil, fmt.Errorf("non-finite value %q", value)
-	}
-	return parsed, nil
+	return gpu.ParseFloat(fields[0])
 }
 
 func parseMiB(value string) (*uint64, error) {
@@ -163,7 +166,7 @@ func parseMiB(value string) (*uint64, error) {
 	if len(fields) == 0 || strings.EqualFold(strings.TrimSpace(value), "N/A") {
 		return nil, nil
 	}
-	if len(fields) < 2 || fields[1] != "MiB" {
+	if len(fields) != 2 || fields[1] != "MiB" {
 		return nil, fmt.Errorf("invalid MiB value %q", value)
 	}
 	size, err := gpu.ParseFloat(fields[0])
